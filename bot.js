@@ -1,3 +1,7 @@
+// Mantener Fly.io contento
+const http = require('http');
+http.createServer((req, res) => res.end('Bot activo')).listen(8080);
+
 const config = require('./config/settings');
 const { getCandles, getPrecio, getBalance, comprar, vender } = require('./services/binanceService');
 const { getNoticiasScore } = require('./services/newsService');
