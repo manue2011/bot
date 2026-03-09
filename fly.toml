@@ -1,0 +1,10 @@
+app = 'crypto-bot-ultra'
+primary_region = 'cdg'
+
+[processes]
+  app = "node bot.js"
+
+[[vm]]
+  memory = '256mb'
+  cpu_kind = 'shared'
+  cpus = 1
