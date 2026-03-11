@@ -1,7 +1,8 @@
 const TelegramBot = require('node-telegram-bot-api');
 const config = require('../config/settings');
 
-const bot = new TelegramBot(config.TELEGRAM_TOKEN, { polling: false });
+// 1. Polling en true para poder recibir mensajes
+const bot = new TelegramBot(config.TELEGRAM_TOKEN, { polling: true }); 
 const CHAT_ID = config.TELEGRAM_CHAT_ID;
 
 async function enviar(mensaje) {
@@ -83,6 +84,7 @@ Revisa los logs en Railway antes de reactivar.`);
 }
 
 module.exports = {
+  bot, // Exportamos el bot para que bot.js lo use
   enviar,
   mensajeInicio,
   mensajeCompra,

@@ -1,0 +1,10 @@
+
+realizar los cambios en el backend 
+installar
+pwsh -Command "iwr https://fly.io/install.ps1 -useb | iex"
+fly auth login
+npm instalj
+fly logs                          # ver logs en tiempo real
+fly secrets set VARIABLE=valor    # cambiar variables
+fly deploy                        # redesplegar tras cambios en el código
+

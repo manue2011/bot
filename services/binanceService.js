@@ -1,45 +1,68 @@
-const Binance = require('node-binance-api');
 const axios = require('axios');
+const crypto = require('crypto');
 const config = require('../config/settings');
 
-// Cliente para órdenes (testnet o real)
-const binance = new Binance().options({
-  APIKEY: config.BINANCE_API_KEY,
-  APISECRET: config.BINANCE_SECRET,
-  useServerTime: true,
-  recvWindow: 60000,
-  urls: {
-    base: config.BINANCE_TESTNET
-      ? 'https://testnet.binance.vision/api/'
-      : 'https://api.binance.com/api/',
-    stream: config.BINANCE_TESTNET
-      ? 'wss://testnet.binance.vision/stream?streams='
-      : 'wss://stream.binance.com:9443/stream?streams='
-  }
-});
+// Configuración de URLs basada en el entorno
+const BASE_URL = config.BINANCE_TESTNET 
+  ? 'https://testnet.binance.vision' 
+  : 'https://api.binance.com';
 
-// ── Obtener velas desde API pública de Binance (sin auth) ──
-// Usamos la API pública real para datos de mercado — es estable y gratuita
-async function getCandles(symbol) {
-  console.log(`📡 Obteniendo candles para ${symbol}...`);
+/**
+ * 🔐 Función centralizada para peticiones firmadas a Binance
+ */
+async function signedRequest({ method, endpoint, params = {}, recvWindow = 10000 }) {
+  const timestamp = Date.now();
+  
+  // Construir query string con parámetros obligatorios
+  const queryString = new URLSearchParams({
+    ...params,
+    timestamp,
+    recvWindow
+  }).toString();
+
+  // Generar firma HMAC SHA256
+  const signature = crypto
+    .createHmac('sha256', config.BINANCE_SECRET)
+    .update(queryString)
+    .digest('hex');
+
+  const url = `${BASE_URL}${endpoint}?${queryString}&signature=${signature}`;
+
   try {
-    const { data } = await axios.get('https://api.binance.com/api/v3/klines', {
-      params: {
-        symbol: symbol,
-        interval: '1h',
-        limit: 50
+    const response = await axios({
+      method,
+      url,
+      headers: {
+        'X-MBX-APIKEY': config.BINANCE_API_KEY,
+        'Content-Type': 'application/x-www-form-urlencoded'
       },
-      timeout: 8000
+      timeout: 15000
     });
-    const closes = data.map(t => parseFloat(t[4]));
-    console.log(`✅ Candles recibidas para ${symbol}`);
-    return closes;
-  } catch (err) {
-    throw new Error(`Error candles ${symbol}: ${err.message}`);
+    return response.data;
+  } catch (error) {
+    const errorData = error.response?.data ? JSON.stringify(error.response.data) : error.message;
+    throw new Error(`Binance API Error (${endpoint}): ${errorData}`);
   }
 }
 
-// ── Obtener precio actual desde API pública ──
+/**
+ * 📡 Obtener velas (API Pública - Datos reales para mejor precisión)
+ */
+async function getCandles(symbol) {
+  try {
+    const { data } = await axios.get('https://api.binance.com/api/v3/klines', {
+      params: { symbol, interval: '1h', limit: 50 },
+      timeout: 8000
+    });
+    return data.map(t => parseFloat(t[4])); // Retorna precios de cierre
+  } catch (err) {
+    throw new Error(`Error al obtener candles ${symbol}: ${err.message}`);
+  }
+}
+
+/**
+ * 💵 Obtener precio actual (API Pública)
+ */
 async function getPrecio(symbol) {
   try {
     const { data } = await axios.get('https://api.binance.com/api/v3/ticker/price', {
@@ -48,92 +71,95 @@ async function getPrecio(symbol) {
     });
     return parseFloat(data.price);
   } catch (err) {
-    throw new Error(`Error precio ${symbol}: ${err.message}`);
+    throw new Error(`Error al obtener precio ${symbol}: ${err.message}`);
   }
 }
 
-// ── Obtener balance (usa testnet o real según config) ──
+/**
+ * 💰 Obtener balance de la cuenta
+ */
 async function getBalance() {
-  return new Promise((resolve, reject) => {
-    binance.balance((error, balances) => {
-      if (error) return reject(new Error(`Error balance: ${JSON.stringify(error)}`));
-      const usdt = parseFloat(balances['USDT']?.available || 0);
-      resolve(usdt);
+  try {
+    const data = await signedRequest({
+      method: 'GET',
+      endpoint: '/api/v3/account'
     });
-  });
+    const asset = data.balances.find(b => b.asset === 'USDT');
+    return parseFloat(asset?.free || 0);
+  } catch (err) {
+    throw new Error(`Error al obtener balance: ${err.message}`);
+  }
 }
 
-// ── Ejecutar orden de COMPRA ──
-const crypto = require('crypto');
-
+/**
+ * 🟢 Ejecutar orden de COMPRA (Market) usando monto en USDT
+ */
 async function comprar(symbol, cantidadUSDT) {
-  const precio = await getPrecio(symbol);
-
-  const decimalesPorPar = { 'BTCUSDT': 5, 'ETHUSDT': 4, 'SOLUSDT': 2 };
-  const decimales = decimalesPorPar[symbol] || 4;
-  const cantidad = Math.floor((cantidadUSDT / precio) * Math.pow(10, decimales)) / Math.pow(10, decimales);
-
-  console.log(`   💰 Comprando ${cantidad} ${symbol} a $${precio}`);
-
-  const timestamp = Date.now();
-  const params = `symbol=${symbol}&side=BUY&type=MARKET&quantity=${cantidad}&timestamp=${timestamp}&recvWindow=60000`;
-  const signature = crypto.createHmac('sha256', config.BINANCE_SECRET).update(params).digest('hex');
-
-  const { data } = await axios.post(
-    'https://testnet.binance.vision/api/v3/order',
-    params + `&signature=${signature}`,
-    {
-      headers: {
-        'X-MBX-APIKEY': config.BINANCE_API_KEY,
-        'Content-Type': 'application/x-www-form-urlencoded'
-      },
-      timeout: 15000  // 15 segundos máximo
+  console.log(`🟢 Ejecutando COMPRA en ${symbol} por ${cantidadUSDT} USDT...`);
+  
+  const order = await signedRequest({
+    method: 'POST',
+    endpoint: '/api/v3/order',
+    params: {
+      symbol,
+      side: 'BUY',
+      type: 'MARKET',
+      quoteOrderQty: cantidadUSDT.toString() // Compra exactamente X USDT
     }
-  );
+  });
 
-  console.log(`   ✅ COMPRA ejecutada — orderId: ${data.orderId} | status: ${data.status}`);
+  // Extraer precio real de los fills de la orden
+  const precioEjecucion = parseFloat(order.fills[0]?.price || 0);
+  const cantidadComprada = parseFloat(order.executedQty);
+
+  console.log(`✅ COMPRA exitosa: ${cantidadComprada} ${symbol} a $${precioEjecucion}`);
 
   return {
-    orderId: data.orderId,
+    orderId: order.orderId,
     symbol,
     lado: 'COMPRA',
-    cantidad,
-    precio,
-    usdt: cantidadUSDT,
+    cantidad: cantidadComprada,
+    precio: precioEjecucion,
+    usdt: parseFloat(order.cummulativeQuoteQty),
     timestamp: new Date().toISOString()
   };
 }
+
+/**
+ * 🔴 Ejecutar orden de VENTA (Market)
+ */
 async function vender(symbol, cantidad) {
-  const precio = await getPrecio(symbol);
+  console.log(`🔴 Ejecutando VENTA en ${symbol} de ${cantidad} unidades...`);
 
-  console.log(`   💸 Vendiendo ${cantidad} ${symbol} a $${precio}`);
-
-  const timestamp = Date.now();
-  const params = `symbol=${symbol}&side=SELL&type=MARKET&quantity=${cantidad}&timestamp=${timestamp}&recvWindow=60000`;
-  const signature = crypto.createHmac('sha256', config.BINANCE_SECRET).update(params).digest('hex');
-
-  const { data } = await axios.post(
-    'https://testnet.binance.vision/api/v3/order',
-    params + `&signature=${signature}`,
-    {
-      headers: {
-        'X-MBX-APIKEY': config.BINANCE_API_KEY,
-        'Content-Type': 'application/x-www-form-urlencoded'
-      },
-      timeout: 15000
+  const order = await signedRequest({
+    method: 'POST',
+    endpoint: '/api/v3/order',
+    params: {
+      symbol,
+      side: 'SELL',
+      type: 'MARKET',
+      quantity: cantidad.toString()
     }
-  );
+  });
 
-  console.log(`   ✅ VENTA ejecutada — orderId: ${data.orderId} | status: ${data.status}`);
+  const precioVenta = parseFloat(order.fills[0]?.price || 0);
+
+  console.log(`✅ VENTA exitosa: ${symbol} a $${precioVenta}`);
 
   return {
-    orderId: data.orderId,
+    orderId: order.orderId,
     symbol,
     lado: 'VENTA',
-    cantidad,
-    precio,
-    usdt: parseFloat((cantidad * precio).toFixed(2)),
+    cantidad: parseFloat(order.executedQty),
+    precio: precioVenta,
     timestamp: new Date().toISOString()
   };
 }
-module.exports = { getCandles, getPrecio, getBalance, comprar, vender };
+
+module.exports = { 
+  getCandles, 
+  getPrecio, 
+  getBalance, 
+  comprar, 
+  vender 
+};

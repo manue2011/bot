@@ -1,4 +1,3 @@
-// Mantener Fly.io contento
 const http = require('http');
 http.createServer((req, res) => res.end('Bot activo')).listen(8080);
 
@@ -18,70 +17,70 @@ const {
   validarMinNotional,
   superaPerdidaMaxima,
   generarResumenDiario,
-  guardarTrade
+  guardarTrade,
+  guardarPosiciones,
+  cargarPosiciones
 } = require('./risk/riskManager');
 
-// ── Estado del bot en memoria ──
-// Guarda las posiciones abiertas por par
-const posicionesAbiertas = {};
-// { BTCUSDT: { precioEntrada, cantidad, stopLoss, takeProfit, timestamp } }
+// ── ESTADO DEL BOT CON PERSISTENCIA ──
+let posicionesAbiertas = cargarPosiciones(); 
+
+// Cálculo inteligente del capital disponible al arrancar
+const invertido = Object.values(posicionesAbiertas).reduce((acc, pos) => acc + (pos.usdt || 0), 0);
+let capitalActual = parseFloat((config.CAPITAL_TOTAL - invertido).toFixed(4));
 
 let botActivo = true;
-let capitalActual = config.CAPITAL_TOTAL;
 
-// ── Analizar y operar un par ──
-async function procesarPar(symbol) {
+async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal) {
   if (!botActivo) return;
-console.log(`🔍 Procesando ${symbol}...`);
+  console.log(`🔍 Procesando ${symbol}...`);
+
   try {
-    // 1. Obtener datos de precio
     const closes = await getCandles(symbol);
     const precio = closes[closes.length - 1];
 
-    // 2. Calcular indicadores
     const rsi = calcRSI(closes, 14);
     const sma20 = calcSMA(closes, 20);
     const macd = calcMACD(closes);
     const bollinger = calcBollinger(closes, 20, 2);
 
     if (!rsi || !sma20 || !macd || !bollinger) {
-      console.log(`⚠️ ${symbol}: datos insuficientes para calcular indicadores`);
+      console.log(`⚠️ ${symbol}: datos insuficientes para indicadores`);
       return;
     }
 
-    // 3. Obtener datos externos
-    const { valor: fgValor, clasificacion: fgClasificacion } = await getFearGreed();
-    const { señal: fgSeñal } = evaluarFearGreed(fgValor);
     const { sentimiento, titular } = await getNoticiasScore(symbol);
 
     console.log(`\n📊 ${symbol} | $${precio}`);
-    console.log(`   RSI: ${rsi} | SMA20: $${sma20} | MACD: ${macd.alcista ? '↑ alcista' : '↓ bajista'}`);
-    console.log(`   Bollinger inf: ${bollinger.enBandaInferior} | sup: ${bollinger.enBandaSuperior}`);
+    console.log(`   RSI: ${rsi.toFixed(2)} | SMA20: $${sma20.toFixed(2)} | MACD: ${macd.alcista ? '↑ alcista' : '↓ bajista'}`);
     console.log(`   Fear&Greed: ${fgValor} (${fgClasificacion}) | Noticias: ${sentimiento}`);
 
-    // ── LÓGICA DE VENTA (primero comprobamos si hay posición abierta) ──
+    // ── LÓGICA DE VENTA ──
     if (posicionesAbiertas[symbol]) {
       const pos = posicionesAbiertas[symbol];
 
       const debeVender =
-        precio >= pos.takeProfit ||    // Take-Profit alcanzado
-        precio <= pos.stopLoss  ||     // Stop-Loss tocado
-        (rsi > 65 && precio > sma20) || // Señal técnica de venta
-        sentimiento === 'NEGATIVO';    // Noticias muy negativas
+        precio >= pos.takeProfit ||          
+        precio <= pos.stopLoss  ||           
+        (rsi > 75 && precio > sma20) ||      
+        sentimiento === 'NEGATIVO';          
 
       if (debeVender) {
         const motivo =
-          precio >= pos.takeProfit ? '🎯 Take-Profit alcanzado' :
-          precio <= pos.stopLoss   ? '🛡️ Stop-Loss activado'   :
-          sentimiento === 'NEGATIVO' ? '📰 Noticia negativa'    :
-          '📊 Señal técnica de venta';
+          precio >= pos.takeProfit ? '🎯 Take-Profit' :
+          precio <= pos.stopLoss ? '🛡️ Stop-Loss' :
+          sentimiento === 'NEGATIVO' ? '📰 Noticias' :
+          '📊 RSI>75';
 
         const orden = await vender(symbol, pos.cantidad);
         const { neto, pct } = calcResultado(pos.precioEntrada, orden.precio, pos.cantidad);
 
-        capitalActual = parseFloat((capitalActual + neto).toFixed(4));
+        // Al vender, sumamos el neto ganado y recuperamos el USDT invertido
+        capitalActual = parseFloat((capitalActual + neto + (pos.usdt || 0)).toFixed(4));
 
-        // Guardar en historial
+        delete posicionesAbiertas[symbol];
+        guardarPosiciones(posicionesAbiertas); 
+
         guardarTrade({
           lado: 'VENTA',
           symbol,
@@ -94,7 +93,6 @@ console.log(`🔍 Procesando ${symbol}...`);
           timestamp: new Date().toISOString()
         });
 
-        // Notificar por Telegram
         await telegram.mensajeVenta({
           symbol,
           precioEntrada: pos.precioEntrada,
@@ -105,51 +103,52 @@ console.log(`🔍 Procesando ${symbol}...`);
           motivo
         });
 
-        delete posicionesAbiertas[symbol];
-
-        // Verificar pérdida máxima diaria
-        const { supera, perdidaHoy, maxPermitida } = superaPerdidaMaxima();
+        const { supera, perdidaHoy } = superaPerdidaMaxima();
         if (supera) {
           botActivo = false;
-          await telegram.mensajeAlertaCritica(
-            'Pérdida diaria máxima alcanzada',
-            perdidaHoy,
-            capitalActual
-          );
-          console.log('🚨 Bot pausado — pérdida máxima diaria alcanzada');
+          await telegram.mensajeAlertaCritica('Pérdida máxima', perdidaHoy, capitalActual);
         }
       }
-
-      return; // Si hay posición abierta, no buscamos compra
+      return; 
     }
 
     // ── LÓGICA DE COMPRA ──
-    const señalesCompra = [
-      rsi < 35,                    // RSI sobrevendido
-      precio < sma20,              // Precio bajo media
-      macd.alcista === true,       // MACD alcista
-      bollinger.enBandaInferior    // Precio en banda inferior
-    ];
+    const esMeanReversion = rsi < 40 && precio < sma20 && bollinger.enBandaInferior && macd.alcista;
+    const esMomentum = rsi > 50 && rsi < 70 && precio > sma20 && (macd.alcista || fgValor < 20);
+    const estrategia = esMeanReversion ? 'MeanReversion' : esMomentum ? 'Momentum' : null;
 
-    const señalesConfirmadas = señalesCompra.filter(Boolean).length;
+    // ── DIAGNÓSTICO DE FILTROS ──
     const noticiasBloqueantes = sentimiento === 'NEGATIVO';
-    const fearGreedBloqueante =fgSeñal === 'PELIGRO';
-    const capitalSuficiente = capitalActual - config.CAPITAL_RESERVA >= config.CAPITAL_POR_PAR;
+    const fearGreedBloqueante = fgSeñal === 'PELIGRO';
+    const capitalSuficiente = capitalActual >= config.CAPITAL_POR_PAR;
     const operacionesAbiertas = Object.keys(posicionesAbiertas).length;
+    const minNotionalOk = validarMinNotional(config.CAPITAL_POR_PAR);
 
-    console.log(`   Señales confirmadas: ${señalesCompra.filter(Boolean).length}/4`);
+    let razonNoCompra = "";
+    if (estrategia === null) {
+      razonNoCompra = "Esperando señal técnica (RSI/SMA/MACD)";
+    } else if (noticiasBloqueantes) {
+      razonNoCompra = `Noticias NEGATIVAS detectadas`;
+    } else if (fearGreedBloqueante) {
+      razonNoCompra = `Mercado en Codicia Extrema (${fgValor})`;
+    } else if (!capitalSuficiente) {
+      razonNoCompra = `Saldo insuficiente en bot ($${capitalActual.toFixed(2)})`;
+    } else if (operacionesAbiertas >= config.MAX_OPEN_TRADES) {
+      razonNoCompra = `Máximo de trades alcanzado (${config.MAX_OPEN_TRADES})`;
+    } else if (!minNotionalOk) {
+      razonNoCompra = `Monto $${config.CAPITAL_POR_PAR} por debajo del mínimo de Binance`;
+    }
 
-    const puedeComprar =
-      señalesConfirmadas >= 3 &&          // mínimo 3 de 4 indicadores
-      !noticiasBloqueantes &&             // sin noticias negativas
-      !fearGreedBloqueante &&             // sin codicia extrema
-      capitalSuficiente &&                // capital suficiente
-      operacionesAbiertas < config.MAX_OPEN_TRADES && // máx operaciones
-      validarMinNotional(config.CAPITAL_POR_PAR);     // mínimo Binance
-
+    const puedeComprar = 
+      estrategia !== null && 
+      !noticiasBloqueantes && 
+      !fearGreedBloqueante && 
+      capitalSuficiente && 
+      operacionesAbiertas < config.MAX_OPEN_TRADES && 
+      minNotionalOk;
 
     if (puedeComprar) {
-        console.log(`🟢 Intentando comprar ${symbol}...`)
+      console.log(`🟢 COMPRANDO ${symbol} (${estrategia})...`);
       const orden = await comprar(symbol, config.CAPITAL_POR_PAR);
       const stopLoss = calcStopLoss(orden.precio);
       const takeProfit = calcTakeProfit(orden.precio);
@@ -159,9 +158,12 @@ console.log(`🔍 Procesando ${symbol}...`);
         cantidad: orden.cantidad,
         stopLoss,
         takeProfit,
+        estrategia,
+        usdt: config.CAPITAL_POR_PAR, 
         timestamp: new Date().toISOString()
       };
 
+      guardarPosiciones(posicionesAbiertas); 
       capitalActual = parseFloat((capitalActual - config.CAPITAL_POR_PAR).toFixed(4));
 
       guardarTrade({
@@ -172,6 +174,7 @@ console.log(`🔍 Procesando ${symbol}...`);
         usdt: config.CAPITAL_POR_PAR,
         stopLoss,
         takeProfit,
+        estrategia,
         timestamp: new Date().toISOString()
       });
 
@@ -182,66 +185,79 @@ console.log(`🔍 Procesando ${symbol}...`);
         usdt: config.CAPITAL_POR_PAR,
         stopLoss,
         takeProfit,
-        rsi,
+        rsi: rsi.toFixed(2),
         macd: macd.alcista,
-        bollinger: bollinger.enBandaInferior ? 'banda inf.' : 'normal',
+        bollinger: bollinger.enBandaInferior ? 'inf' : (bollinger.enBandaSuperior ? 'sup' : 'normal'),
         noticias: sentimiento,
-        fearGreed: `${fgValor} (${fgClasificacion})`
+        fearGreed: `${fgValor} (${fgClasificacion})`,
+        estrategia
       });
-
     } else {
-      console.log(`   ⏳ Sin señal de compra — esperando...`);
+      console.log(`   ⏳ Estado: ${razonNoCompra}`);
     }
 
   } catch (err) {
-  console.error(`❌ Error procesando ${symbol}:`, err.message);
-  if (err.body) console.error('   Binance body:', err.body);
-  if (err.response) console.error('   Binance response:', JSON.stringify(err.response));
-  console.error(err);
-
+    console.error(`❌ Error en ${symbol}:`, err.message);
   }
 }
 
-// ── Bucle principal ──
 async function tick() {
   if (!botActivo) return;
-  console.log(`\n⏰ ${new Date().toLocaleTimeString('es-ES')} — Analizando mercado...`);
-
-  // Procesar todos los pares en paralelo
-  await Promise.all(config.SYMBOLS.map(symbol => procesarPar(symbol)));
+  console.log(`\n⏰ ${new Date().toLocaleTimeString('es-ES')} — Iniciando ciclo de mercado...`);
+  const { valor: fgValor, clasificacion: fgClasificacion } = await getFearGreed();
+  const { señal: fgSeñal } = evaluarFearGreed(fgValor);
+  await Promise.all(config.SYMBOLS.map(symbol => procesarPar(symbol, fgValor, fgClasificacion, fgSeñal)));
 }
 
-// ── Resumen diario a las 23:59 ──
 function programarResumenDiario() {
   const ahora = new Date();
-  const medianoche = new Date();
+  const medianoche = new Date(ahora);
   medianoche.setHours(23, 59, 0, 0);
-
   const msHasta = medianoche.getTime() - ahora.getTime();
-  const delay = msHasta > 0 ? msHasta : msHasta + 24 * 60 * 60 * 1000;
-
+  const delay = msHasta > 0 ? msHasta : msHasta + 24*60*60*1000;
   setTimeout(async () => {
     const resumen = generarResumenDiario(capitalActual);
     await telegram.mensajeResumenDiario(resumen);
-    programarResumenDiario(); // programa el siguiente día
+    programarResumenDiario();
   }, delay);
 }
 
-// ── Arrancar el bot ──
 async function iniciar() {
-  console.log('🤖 Crypto Bot Ultra arrancando...');
-  console.log(`   Modo: ${config.BINANCE_TESTNET ? 'TESTNET' : '🔴 REAL'}`);
-  console.log(`   Pares: ${config.SYMBOLS.join(', ')}`);
-  console.log(`   Capital: ${config.CAPITAL_TOTAL} USDT`);
+  console.log('🤖 Crypto Bot Ultra v3.1 - MODO DIAGNÓSTICO COMPLETO');
+  console.log(`   Capital Disponible: $${capitalActual.toFixed(2)} USDT`);
+
+  // COMANDO STATUS
+ if (telegram.bot) {
+    telegram.bot.onText(/\/status/, (msg) => {
+      const inv = Object.values(posicionesAbiertas).reduce((acc, p) => acc + (p.usdt || 0), 0);
+      let txt = `📊 <b>ESTADO DEL BOT</b>\n`;
+      txt += `━━━━━━━━━━━━━━━━━━━━\n`;
+      txt += `💰 Total: <b>$${(capitalActual + inv).toFixed(2)}</b>\n`;
+      txt += `💵 Libre: $${capitalActual.toFixed(2)}\n`;
+      txt += `📦 Abiertas: ${Object.keys(posicionesAbiertas).length}/3\n\n`;
+
+      // ESTA ES LA PARTE QUE FALTABA: Listar cada moneda
+      if (Object.keys(posicionesAbiertas).length > 0) {
+        txt += `📝 <b>DETALLE:</b>\n`;
+        Object.entries(posicionesAbiertas).forEach(([sym, p]) => {
+          txt += `• <b>${sym}</b>: $${p.precioEntrada} (Inv: $${p.usdt})\n`;
+        });
+      } else {
+        txt += `<i>No hay posiciones abiertas actualmente.</i>`;
+      }
+
+      telegram.bot.sendMessage(msg.chat.id, txt, { parse_mode: 'HTML' });
+    });
+  }
 
   await telegram.mensajeInicio();
   programarResumenDiario();
 
-  // Primera ejecución inmediata
-  await tick();
-
-  // Bucle cada X segundos
-  setInterval(tick, config.INTERVALO_SEGUNDOS * 1000);
+  async function loop() {
+    await tick();
+    setTimeout(loop, config.INTERVALO_SEGUNDOS * 1000);
+  }
+  loop();
 }
 
 iniciar();
