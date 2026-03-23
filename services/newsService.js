@@ -10,54 +10,74 @@ function extraerMoneda(symbol) {
 
 async function actualizarNoticias() {
   const ahora = Date.now();
-  if (ahora - ultimaActualizacion < 5 * 60 * 1000) return;
+  // 1. Si los datos tienen menos de 5 minutos, usamos la caché
+  if (ahora - ultimaActualizacion < 5 * 60 * 1000 && Object.keys(cacheNoticias).length > 0) return;
 
-  for (const symbol of config.SYMBOLS) {
-    const moneda = extraerMoneda(symbol);
+  try {
+    console.log("📰 Actualizando noticias desde Finnhub...");
+    
+    // 2. PEDIMOS LAS NOTICIAS SOLO UNA VEZ (Mucho más eficiente)
+    const { data } = await axios.get('https://finnhub.io/api/v1/news', {
+      params: {
+        category: 'crypto',
+        token: config.FINNHUB_API_KEY
+      },
+      timeout: 5000
+    });
 
-    try {
-      const { data } = await axios.get('https://finnhub.io/api/v1/news', {
-        params: {
-          category: 'crypto',
-          token: config.FINNHUB_API_KEY
-        },
-        timeout: 5000
-      });
+    if (!Array.isArray(data)) throw new Error("Respuesta de noticias no es válida");
 
-      const noticias = data.filter(n =>
-        n.headline?.toLowerCase().includes(moneda.toLowerCase()) ||
-        n.summary?.toLowerCase().includes(moneda.toLowerCase())
-      ).slice(0, 5);
+    // 3. PROCESAMOS CADA MONEDA USANDO LA MISMA LISTA
+    config.SYMBOLS.forEach(symbol => {
+      const moneda = extraerMoneda(symbol);
+      
+      // Filtramos noticias que mencionen la moneda (ej: "SOL" o "Solana")
+      const noticiasMoneda = data.filter(n => {
+        const texto = (n.headline + ' ' + n.summary).toLowerCase();
+        // Añadimos nombres completos por si acaso (Avalanche, Ethereum, etc)
+        const nombreLargo = moneda === 'AVAX' ? 'avalanche' : moneda === 'ETH' ? 'ethereum' : moneda === 'SOL' ? 'solana' : moneda.toLowerCase();
+        return texto.includes(moneda.toLowerCase()) || texto.includes(nombreLargo);
+      }).slice(0, 5);
 
       let score = 0;
       const palabrasPositivas = ['surge', 'rally', 'gain', 'bull', 'rise', 'up', 'high', 'record', 'growth', 'adoption'];
       const palabrasNegativas = ['crash', 'drop', 'fall', 'bear', 'down', 'low', 'hack', 'ban', 'fear', 'sell'];
 
-      noticias.forEach(n => {
+      noticiasMoneda.forEach(n => {
         const texto = (n.headline + ' ' + n.summary).toLowerCase();
         palabrasPositivas.forEach(p => { if (texto.includes(p)) score++; });
         palabrasNegativas.forEach(p => { if (texto.includes(p)) score--; });
       });
 
-      let sentimiento;
-      if (score > 2)       sentimiento = 'POSITIVO';
-      else if (score < -2) sentimiento = 'NEGATIVO';
-      else                 sentimiento = 'NEUTRO';
+      let sentimiento = 'NEUTRO';
+      if (score > 1) sentimiento = 'POSITIVO'; // Bajamos el umbral a 1 para ser más sensibles
+      else if (score < -1) sentimiento = 'NEGATIVO';
 
       cacheNoticias[symbol] = {
         sentimiento,
         score,
-        titular: noticias[0]?.headline || 'Sin noticias'
+        titular: noticiasMoneda[0]?.headline || 'Sin noticias recientes'
       };
+    });
 
-    } catch (err) {
-      console.error(`Error noticias ${moneda}:`, err.message);
-      cacheNoticias[symbol] = { sentimiento: 'NEUTRO', score: 0, titular: 'Sin datos' };
-    }
+    ultimaActualizacion = ahora;
+
+  } catch (err) {
+    console.error(`❌ Error general noticias:`, err.message);
+    // En caso de error, inicializamos la caché para evitar el "undefined"
+    config.SYMBOLS.forEach(s => {
+      if (!cacheNoticias[s]) cacheNoticias[s] = { sentimiento: 'NEUTRO', score: 0, titular: 'Error API' };
+    });
   }
 
-  // ← Log único al final, no dentro del bucle
-  console.log(`📰 Noticias → BTC: ${cacheNoticias['BTCUSDT']?.sentimiento} | ETH: ${cacheNoticias['ETHUSDT']?.sentimiento} | SOL: ${cacheNoticias['SOLUSDT']?.sentimiento}`);
+  // Log de control
+// ✅ LOG DINÁMICO: Mostrará las monedas que tú tengas en tu config automáticamente
+  const status = config.SYMBOLS.map(s => {
+    const moneda = s.replace('USDT', '');
+    return `${moneda}: ${cacheNoticias[s]?.sentimiento || '??'}`;
+  }).join(' | ');
+
+  console.log(`📰 Noticias → ${status}`);
   ultimaActualizacion = Date.now();
 }
 

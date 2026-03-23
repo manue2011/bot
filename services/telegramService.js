@@ -1,7 +1,8 @@
 const TelegramBot = require('node-telegram-bot-api');
 const config = require('../config/settings');
 
-const bot = new TelegramBot(config.TELEGRAM_TOKEN, { polling: false });
+// 1. Polling en true para poder recibir mensajes
+const bot = new TelegramBot(config.TELEGRAM_TOKEN, { polling: true }); 
 const CHAT_ID = config.TELEGRAM_CHAT_ID;
 
 async function enviar(mensaje) {
@@ -16,7 +17,7 @@ function mensajeInicio() {
   return enviar(`🤖 <b>Crypto Bot Ultra iniciado</b>
 ━━━━━━━━━━━━━━━━━━━━
 💰 Capital total: <b>${config.CAPITAL_TOTAL} USDT</b>
-📊 Pares: <b>BTC | ETH | SOL</b>
+📊 Pares: <b>${config.SYMBOLS.join(' | ')}</b>
 🔒 Modo: <b>${config.BINANCE_TESTNET ? 'TESTNET' : '🔴 REAL'}</b>
 ⏰ Intervalo: <b>${config.INTERVALO_SEGUNDOS}s</b>
 ━━━━━━━━━━━━━━━━━━━━
@@ -34,9 +35,8 @@ function mensajeCompra(datos) {
 🛡️ Stop-Loss: <b>$${datos.stopLoss}</b> (-${config.STOP_LOSS_PCT}%)
 🎯 Take-Profit: <b>$${datos.takeProfit}</b> (+${config.TAKE_PROFIT_PCT - config.FEE_PCT * 2}% neto)
 ━━━━━━━━━━━━━━━━━━━━
-📊 RSI: ${datos.rsi} | MACD: ${datos.macd ? '↑' : '↓'} | Bollinger: ${datos.bollinger}
-📰 Noticias: ${datos.noticias}
-😱 Fear&Greed: ${datos.fearGreed}
+🧠 Estrategia: <b>${datos.estrategia}</b>
+📊 RSI: ${datos.rsi} | MACD: ${datos.macd ? '↑ Alcista' : '↓ Bajista'}
 ⏰ ${new Date().toLocaleString('es-ES')}`);
 }
 
@@ -79,10 +79,11 @@ Motivo: ${motivo}
 📉 Pérdida del día: <b>-$${perdida}</b>
 💰 Capital actual: <b>${capitalActual} USDT</b>
 ━━━━━━━━━━━━━━━━━━━━
-Revisa los logs en Railway antes de reactivar.`);
+Revisa los logs en Fly.io antes de reactivar.`);
 }
 
 module.exports = {
+  bot,
   enviar,
   mensajeInicio,
   mensajeCompra,
