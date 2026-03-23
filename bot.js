@@ -151,7 +151,7 @@ async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal) {
       // 🛡️ TRAILING STOP DINÁMICO
       if (gananciaActualPct >= 1.5) {
         const distanciaSeguridad = 0.98; // Mantenemos un 2% de margen
-        
+
         // 1. Calculamos el suelo que sigue al precio
         const nuevoStopSugerido = precio * distanciaSeguridad;
         // 2. Calculamos el mínimo para no perder (Entrada + 0.5%)
@@ -164,7 +164,9 @@ async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal) {
         if (mejorStop > pos.stopLoss) {
           pos.stopLoss = mejorStop;
           guardarPosiciones(posicionesAbiertas);
-          console.log(`📈 [TRAILING] Subiendo suelo en ${symbol} a $${pos.stopLoss.toFixed(2)} (Profit: ${gananciaActualPct.toFixed(2)}%)`);
+          console.log(
+            `📈 [TRAILING] Subiendo suelo en ${symbol} a $${pos.stopLoss.toFixed(2)} (Profit: ${gananciaActualPct.toFixed(2)}%)`,
+          );
         }
       }
 
