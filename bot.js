@@ -173,7 +173,7 @@ async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal) {
       const debeVender =
         precio >= pos.takeProfit ||
         precio <= pos.stopLoss ||
-        (rsi > 75 && precio > sma20) ||
+       // (rsi > 75 && precio > sma20) ||
         sentimiento === "NEGATIVO";
 
       if (debeVender) {
