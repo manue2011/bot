@@ -255,7 +255,7 @@ async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal) {
     const esMeanReversion =
       rsi < 40 && precio < sma20 && bollinger.enBandaInferior && macd.alcista;
     const esMomentum =
-      rsi > 50 && rsi < 70 && precio > sma20 && (macd.alcista || fgValor < 20);
+      rsi > 50 && rsi < 85 && precio > sma20 && (macd.alcista || fgValor < 20);
     const estrategia = esMeanReversion
       ? "MeanReversion"
       : esMomentum
