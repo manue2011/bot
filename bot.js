@@ -39,8 +39,10 @@ const {
 } = require("./risk/riskManager");
 
 // ── ESTADO DEL BOT CON PERSISTENCIA ──
-let posicionesAbiertas = cargarPosiciones();
-let ultimoVentaTime = {}; // 🕒 Registro para evitar recompras inmediatas (5 min)
+// 🟠 FIX 4: Cargar tanto posiciones como el tiempo de última venta
+const datosGuardados = cargarPosiciones() || {};
+let posicionesAbiertas = datosGuardados.posiciones || datosGuardados; // Compatible con tu JSON antiguo
+let ultimoVentaTime = datosGuardados.ultimoVentaTime || {}; // Recuperamos la memoria de enfriamiento
 
 // Cálculo del capital disponible restando lo ya invertido
 const invertido = Object.values(posicionesAbiertas).reduce(
@@ -92,8 +94,7 @@ async function obtenerEstadoMacro() {
 }
 
 // ── MOTOR PRINCIPAL ──
-async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal) {
-  if (!botActivo) return;
+async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal, macro) {  if (!botActivo) return;
   console.log(`🔍 Procesando ${symbol}...`);
 
   try {
@@ -124,8 +125,7 @@ async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal) {
     }
 
     const { sentimiento } = await getNoticiasScore(symbol);
-    const macro = await obtenerEstadoMacro();
-
+    
     // ── CÁLCULO DE LA NOTA IA ──
     let puntuacionIA = 0;
     if (precio > sma20) puntuacionIA += 3;
@@ -163,7 +163,7 @@ async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal) {
         // Solo actualizamos si el nuevo stop es realmente superior al que ya teníamos
         if (mejorStop > pos.stopLoss) {
           pos.stopLoss = mejorStop;
-          guardarPosiciones(posicionesAbiertas);
+          guardarPosiciones({ posiciones: posicionesAbiertas, ultimoVentaTime });
           console.log(
             `📈 [TRAILING] Subiendo suelo en ${symbol} a $${pos.stopLoss.toFixed(2)} (Profit: ${gananciaActualPct.toFixed(2)}%)`,
           );
@@ -214,7 +214,7 @@ async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal) {
         });
 
         delete posicionesAbiertas[symbol];
-        guardarPosiciones(posicionesAbiertas);
+        guardarPosiciones({ posiciones: posicionesAbiertas, ultimoVentaTime });
 
         guardarTrade({
           lado: "VENTA",
@@ -296,59 +296,73 @@ async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal) {
       Object.keys(posicionesAbiertas).length < config.MAX_OPEN_TRADES &&
       minNotionalOk;
 
-    if (puedeComprar) {
+  if (puedeComprar) {
       console.log(`🟢 COMPRANDO ${symbol} (${estrategia})...`);
-      const orden = await comprar(symbol, config.CAPITAL_POR_PAR);
+      
+      // 🔴 FIX 1: RESERVA SÍNCRONA DE CAPITAL
+      capitalActual -= config.CAPITAL_POR_PAR;
 
-      const stopLoss = calcStopLoss(orden.precio, atr);
-      const takeProfit = calcTakeProfit(orden.precio);
+      try {
+        const orden = await comprar(symbol, config.CAPITAL_POR_PAR);
 
-      // AQUÍ EL BOT GUARDA LA NOTA PARA ACORDARSE AL VENDER
-      posicionesAbiertas[symbol] = {
-        precioEntrada: orden.precio,
-        cantidad: orden.cantidad,
-        stopLoss,
-        takeProfit,
-        estrategia,
-        notaIA: puntuacionIA,
-        estadoMacro: macro,
-        usdt: config.CAPITAL_POR_PAR,
-        timestamp: new Date().toISOString(),
-      };
+        const stopLoss = calcStopLoss(orden.precio, atr);
+        const takeProfit = calcTakeProfit(orden.precio);
 
-      guardarPosiciones(posicionesAbiertas);
-      capitalActual = parseFloat(
-        (capitalActual - config.CAPITAL_POR_PAR).toFixed(4),
-      );
+        posicionesAbiertas[symbol] = {
+          precioEntrada: orden.precio,
+          cantidad: orden.cantidad,
+          stopLoss,
+          takeProfit,
+          estrategia,
+          notaIA: puntuacionIA,
+          estadoMacro: macro, 
+          usdt: config.CAPITAL_POR_PAR,
+          timestamp: new Date().toISOString(),
+        };
 
-      guardarTrade({
-        lado: "COMPRA",
-        symbol,
-        precioEntrada: orden.precio,
-        cantidad: orden.cantidad,
-        usdt: config.CAPITAL_POR_PAR,
-        stopLoss,
-        takeProfit,
-        estrategia,
-        timestamp: new Date().toISOString(),
-      });
+        guardarPosiciones({ posiciones: posicionesAbiertas, ultimoVentaTime });
+        
+        capitalActual = parseFloat(capitalActual.toFixed(4));
 
-      await telegram.mensajeCompra({
-        symbol,
-        precioEntrada: orden.precio,
-        cantidad: orden.cantidad,
-        usdt: config.CAPITAL_POR_PAR,
-        stopLoss,
-        takeProfit,
-        rsi: rsi.toFixed(2),
-        macd: macd.alcista,
-        estrategia,
-      });
+        guardarTrade({
+          lado: "COMPRA",
+          symbol,
+          precioEntrada: orden.precio,
+          cantidad: orden.cantidad,
+          usdt: config.CAPITAL_POR_PAR,
+          stopLoss,
+          takeProfit,
+          estrategia,
+          timestamp: new Date().toISOString(),
+        });
+
+        await telegram.mensajeCompra({
+          symbol,
+          precioEntrada: orden.precio,
+          cantidad: orden.cantidad,
+          usdt: config.CAPITAL_POR_PAR,
+          stopLoss,
+          takeProfit,
+          rsi: rsi.toFixed(2),
+          macd: macd.alcista,
+          estrategia,
+        });
+
+      } catch (err) {
+        // 🔴 FIX 1 (Recuperación) y FIX 3 (Alertas Silenciosas)
+        console.error(`❌ Falló la compra de ${symbol}, devolviendo capital. Error:`, err.message);
+        capitalActual += config.CAPITAL_POR_PAR;
+        capitalActual = parseFloat(capitalActual.toFixed(4));
+        // Añadimos el aviso por Telegram si falla la compra
+        await telegram.mensajeAlertaCritica(`Error en compra ${symbol}`, err.message, capitalActual);
+      } // <-- ESTA ES LA LLAVE QUE FALTABA (Cierra el catch)
     } else {
       console.log(`   ⏳ Estado: ${razonNoCompra}`);
     }
-  } catch (err) {
-    console.error(`❌ Error en ${symbol}:`, err.message);
+  } catch (err) { // <-- ESTE CATCH ES EL GENERAL DE LA FUNCIÓN procesarPar
+    console.error(`❌ Error general en ${symbol}:`, err.message);
+    // FIX 3: Avisar a Telegram si la función entera peta
+    await telegram.mensajeAlertaCritica(`Fallo grave en ${symbol}`, err.message, capitalActual);
   }
 }
 
@@ -358,12 +372,19 @@ async function tick() {
   console.log(
     `\n⏰ ${new Date().toLocaleTimeString("es-ES")} — Ciclo de mercado...`,
   );
-  const { valor: fgValor, clasificacion: fgClasificacion } =
-    await getFearGreed();
+  
+  // 1. Obtenemos el Miedo/Codicia (1 llamada)
+  const { valor: fgValor, clasificacion: fgClasificacion } = await getFearGreed();
   const { señal: fgSeñal } = evaluarFearGreed(fgValor);
+  
+  // 🟠 FIX 2: OBTENER MACRO UNA SOLA VEZ
+  // Preguntamos a Binance por BTC una sola vez por ciclo, no por cada moneda.
+  const macro = await obtenerEstadoMacro(); 
+
+  // 2. Pasamos TODOS los datos a procesarPar
   await Promise.all(
     config.SYMBOLS.map((symbol) =>
-      procesarPar(symbol, fgValor, fgClasificacion, fgSeñal),
+      procesarPar(symbol, fgValor, fgClasificacion, fgSeñal, macro) // <-- Añadido macro aquí
     ),
   );
 }
