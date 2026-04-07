@@ -80,6 +80,28 @@ async function enviarAExcel(datos) {
   }
 }
 
+async function obtenerTendencia4H(symbol) {
+  try {
+    // Pedimos las últimas 60 velas de 4 horas a Binance
+    const response = await axios.get(`${config.BINANCE_BASE_URL}/v3/klines`, {
+      params: { symbol: symbol, interval: "4h", limit: 60 }
+    });
+    
+    if (!response.data || response.data.length < 50) return "ERROR_TENDENCIA";
+
+    const closes4h = response.data.map((c) => parseFloat(c[4]));
+    const precioActual = closes4h[closes4h.length - 1];
+    
+    // Calculamos la Media Móvil Simple de 50 periodos (SMA50) en 4h
+    const sma50_4h = calcSMA(closes4h, 50);
+
+    // Si el precio está por encima de la media de 4h, la marea es alcista
+    return precioActual > sma50_4h ? "ALCISTA_4H" : "BAJISTA_4H";
+  } catch (e) {
+    console.error(`❌ Error en tendencia 4H para ${symbol}:`, e.message);
+    return "ERROR_TENDENCIA";
+  }
+}
 // ── IA DE BOLSILLO: ANALISTA MACRO ──
 async function obtenerEstadoMacro() {
   try {
@@ -125,15 +147,15 @@ async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal, macro) { 
     }
 
     const { sentimiento } = await getNoticiasScore(symbol);
-    
+    const tendencia4h = await obtenerTendencia4H(symbol);
     // ── CÁLCULO DE LA NOTA IA ──
     let puntuacionIA = 0;
-    if (precio > sma20) puntuacionIA += 3;
+    if (tendencia4h === "ALCISTA_4H") puntuacionIA += 3; // 🔥 Regla Pro
+    if (precio > sma20) puntuacionIA += 2;
     if (rsi > 45 && rsi < 65) puntuacionIA += 2;
     if (macd.alcista) puntuacionIA += 2;
     if (sentimiento === "POSITIVO") puntuacionIA += 1;
     if (macro === "BTC_ALCISTA") puntuacionIA += 2;
-
     console.log(`\n📊 ${symbol} | $${precio}`);
     console.log(
       `   RSI: ${rsi.toFixed(2)} | SMA20: $${sma20.toFixed(2)} | MACD: ${macd.alcista ? "↑ alcista" : "↓ bajista"} | ATR: ${atr.toFixed(4)}`,
@@ -204,7 +226,7 @@ async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal, macro) { 
           symbol: symbol,
           signal: pos.estrategia,
           notaIA: pos.notaIA,
-          estadoMacro: pos.estadoMacro,
+          estadoMacro: `${pos.estadoMacro} | ${pos.tendencia4h}`,
           tipo: "VENTA",
           precio: orden.precio,
           cantidad: pos.cantidad,
@@ -262,7 +284,7 @@ async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal, macro) { 
         ? "Momentum"
         : null;
 
-    const notaMinima = 6;
+    const notaMinima = 8;
     const tiempoDesdeVenta = Date.now() - (ultimoVentaTime[symbol] || 0);
     const enfriamientoOk = tiempoDesdeVenta > 300000;
     const monedaBloqueada = estaMonedaBloqueada(symbol, 3);
@@ -272,7 +294,7 @@ async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal, macro) { 
     let razonNoCompra = "";
     if (estrategia === null) razonNoCompra = "Esperando señal técnica";
     else if (puntuacionIA < notaMinima)
-      razonNoCompra = `🧠 IA Rechaza: Nota ${puntuacionIA}/10`;
+      razonNoCompra = `🧠 IA Rechaza: Nota ${puntuacionIA}/12`;
     else if (monedaBloqueada) razonNoCompra = `🛡️ KILL SWITCH Activo`;
     else if (!enfriamientoOk)
       razonNoCompra = `Enfriamiento (${Math.ceil((300000 - tiempoDesdeVenta) / 1000)}s)`;
@@ -317,6 +339,7 @@ async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal, macro) { 
           notaIA: puntuacionIA,
           estadoMacro: macro, 
           usdt: config.CAPITAL_POR_PAR,
+          tendencia4h,
           timestamp: new Date().toISOString(),
         };
 
