@@ -48,13 +48,13 @@ async function signedRequest({ method, endpoint, params = {}, recvWindow = 10000
 /**
  * 📡 Obtener velas (API Pública - Datos reales para mejor precisión)
  */
-async function getCandles(symbol) {
+async function getCandles(symbol, interval = '1h', limit = 50) {
   try {
     const { data } = await axios.get('https://api.binance.com/api/v3/klines', {
-      params: { symbol, interval: '1h', limit: 50 },
+      params: { symbol, interval, limit },
       timeout: 8000
     });
-    return data; // 👈 ¡CORREGIDO! Devolvemos la vela completa
+    return data; 
   } catch (err) {
     throw new Error(`Error al obtener candles ${symbol}: ${err.message}`);
   }

@@ -80,22 +80,19 @@ async function enviarAExcel(datos) {
   }
 }
 
+// ── IA DE BOLSILLO: ANALISTA DE TENDENCIA 4H 🌊 ──
 async function obtenerTendencia4H(symbol) {
   try {
-    // Pedimos las últimas 60 velas de 4 horas a Binance
-    const response = await axios.get(`${config.BINANCE_BASE_URL}/v3/klines`, {
-      params: { symbol: symbol, interval: "4h", limit: 60 }
-    });
+    // Pedimos 60 velas de 4h usando tu súper función (que lee de la API real)
+    const candles4h = await getCandles(symbol, "4h", 60);
     
-    if (!response.data || response.data.length < 50) return "ERROR_TENDENCIA";
+    if (!candles4h || candles4h.length < 50) return "ERROR_TENDENCIA";
 
-    const closes4h = response.data.map((c) => parseFloat(c[4]));
+    const closes4h = candles4h.map((c) => parseFloat(c[4]));
     const precioActual = closes4h[closes4h.length - 1];
     
-    // Calculamos la Media Móvil Simple de 50 periodos (SMA50) en 4h
     const sma50_4h = calcSMA(closes4h, 50);
 
-    // Si el precio está por encima de la media de 4h, la marea es alcista
     return precioActual > sma50_4h ? "ALCISTA_4H" : "BAJISTA_4H";
   } catch (e) {
     console.error(`❌ Error en tendencia 4H para ${symbol}:`, e.message);
@@ -161,7 +158,7 @@ async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal, macro) { 
       `   RSI: ${rsi.toFixed(2)} | SMA20: $${sma20.toFixed(2)} | MACD: ${macd.alcista ? "↑ alcista" : "↓ bajista"} | ATR: ${atr.toFixed(4)}`,
     );
     console.log(
-      `   Fear&Greed: ${fgValor} (${fgClasificacion}) | Noticias: ${sentimiento} | Macro: ${macro}`,
+      `   Fear&Greed: ${fgValor} (${fgClasificacion}) | Noticias: ${sentimiento} | Macro: ${macro} | 🌊 Marea 4H: ${tendencia4h}`,
     );
 
     // ── LÓGICA DE VENTA ──
