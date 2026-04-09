@@ -128,8 +128,10 @@ async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal, macro) { 
     const highs = candles.map((c) => parseFloat(c[2]));
     const lows = candles.map((c) => parseFloat(c[3]));
     const closes = candles.map((c) => parseFloat(c[4]));
+    const volumenes = candles.map((c) => parseFloat(c[5]));
     const precio = closes[closes.length - 1];
-
+    const volActual = volumenes[volumenes.length - 1]; // 🔥 VOLUMEN DE LA VELA ACTUAL
+    const volMedio = volumenes.slice(-20).reduce((a, b) => a + b, 0) / 20; // 🔥 MEDIA DE 20 PERIODOS
     // 3. CÁLCULO DE INDICADORES
     const rsi = calcRSI(closes, 14);
     const sma20 = calcSMA(closes, 20);
@@ -273,8 +275,13 @@ async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal, macro) { 
     // ── LÓGICA DE COMPRA (IA DE BOLSILLO) ──
     const esMeanReversion =
       rsi < 40 && precio < sma20 && bollinger.enBandaInferior && macd.alcista;
-    const esMomentum =
-      rsi > 50 && rsi < 85 && precio > sma20 && (macd.alcista || fgValor < 20);
+ const esMomentum =
+      rsi > 50 && 
+      rsi < 75 && 
+      precio > sma20 && 
+      macd.alcista && 
+      volActual > volMedio * 1.2 && // 🛡️ Exigimos un 20% más de volumen que la media
+      tendencia4h === "ALCISTA_4H"; // 🌊 Marea 4H obligatoria
     const estrategia = esMeanReversion
       ? "MeanReversion"
       : esMomentum
