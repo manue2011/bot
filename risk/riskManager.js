@@ -64,7 +64,7 @@ function calcStopLoss(precioEntrada, atr) {
   const stopLoss = precioEntrada - distanciaSeguridad;
 
   // Suelo de seguridad absoluta: Máximo 3.5% de pérdida
-  const precioMinimoSeguro = precioEntrada * 0.965;
+  const precioMinimoSeguro = precioEntrada * 0.975;
   return parseFloat(Math.max(stopLoss, precioMinimoSeguro).toFixed(2));
 }
 
@@ -154,7 +154,7 @@ function cargarRachas() {
   }
   return {
     SOLUSDT: { contador: 0, ultimoFallo: null },
-    ETHUSDT: { contador: 0, ultimoFallo: null },
+    NEARUSDT: { contador: 0, ultimoFallo: null },
     AVAXUSDT: { contador: 0, ultimoFallo: null },
   };
 }

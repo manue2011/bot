@@ -170,8 +170,8 @@ async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal, macro) { 
         ((precio - pos.precioEntrada) / pos.precioEntrada) * 100;
 
       // 🛡️ TRAILING STOP DINÁMICO
-      if (gananciaActualPct >= 1.5) {
-        const distanciaSeguridad = 0.98; // Mantenemos un 2% de margen
+      if (gananciaActualPct >= 2.0) {
+        const distanciaSeguridad = 0.985; // Mantenemos un 2% de margen
 
         // 1. Calculamos el suelo que sigue al precio
         const nuevoStopSugerido = precio * distanciaSeguridad;

@@ -40,8 +40,8 @@ async function actualizarNoticias() {
       }).slice(0, 5);
 
       let score = 0;
-      const palabrasPositivas = ['surge', 'rally', 'gain', 'bull', 'rise', 'up', 'high', 'record', 'growth', 'adoption'];
-      const palabrasNegativas = ['crash', 'drop', 'fall', 'bear', 'down', 'low', 'hack', 'ban', 'fear', 'sell'];
+      const palabrasPositivas = ['surge', 'rally', 'breakout', 'bullish', 'adoption', 'partnership', 'upgrade', 'record high'];
+      const palabrasNegativas = ['crash', 'hack', 'exploit', 'ban', 'lawsuit', 'bankrupt', 'rug', 'scam', 'plunge', 'collapse'];
 
       noticiasMoneda.forEach(n => {
         const texto = (n.headline + ' ' + n.summary).toLowerCase();
@@ -51,7 +51,7 @@ async function actualizarNoticias() {
 
       let sentimiento = 'NEUTRO';
       if (score > 1) sentimiento = 'POSITIVO'; // Bajamos el umbral a 1 para ser más sensibles
-      else if (score < -1) sentimiento = 'NEGATIVO';
+      else if (score < -2) sentimiento = 'NEGATIVO';
 
       cacheNoticias[symbol] = {
         sentimiento,

@@ -18,8 +18,8 @@ module.exports = {
   MAX_OPEN_TRADES: parseInt(process.env.MAX_OPEN_TRADES || 3),
 
   // Risk
-  TAKE_PROFIT_PCT: parseFloat(process.env.TAKE_PROFIT_PCT || 100),
-  STOP_LOSS_PCT: parseFloat(process.env.STOP_LOSS_PCT || 2),
+  TAKE_PROFIT_PCT: parseFloat(process.env.TAKE_PROFIT_PCT || 3.5),
+  STOP_LOSS_PCT: parseFloat(process.env.STOP_LOSS_PCT || 2.0),
   MAX_PERDIDA_DIARIA_PCT: parseFloat(process.env.MAX_PERDIDA_DIARIA_PCT || 10),
   FEE_PCT: parseFloat(process.env.FEE_PCT || 0.1),
 

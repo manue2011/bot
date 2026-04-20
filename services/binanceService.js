@@ -109,7 +109,7 @@ async function comprar(symbol, cantidadUSDT) {
   });
 
   // Extraer precio real de los fills de la orden
-  const precioEjecucion = parseFloat(order.fills[0]?.price || 0);
+  const precioEjecucion = parseFloat(order.cummulativeQuoteQty) / parseFloat(order.executedQty);
   const cantidadComprada = parseFloat(order.executedQty);
 
   console.log(`✅ COMPRA exitosa: ${cantidadComprada} ${symbol} a $${precioEjecucion}`);

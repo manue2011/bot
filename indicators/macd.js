@@ -24,7 +24,7 @@ function calcMACD(closes) {
   // Línea de señal = EMA9 del MACD
   // Calculamos MACD para los últimos 9 períodos
   const macdHistory = [];
-  for (let i = closes.length - 9; i <= closes.length; i++) {
+  for (let i = closes.length - 9; i < closes.length; i++) {
     const slice = closes.slice(0, i);
     const e12 = calcEMA(slice, 12);
     const e26 = calcEMA(slice, 26);
