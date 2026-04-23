@@ -291,14 +291,16 @@ async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal, macro) { 
     const notaMinima = 8;
     const tiempoDesdeVenta = Date.now() - (ultimoVentaTime[symbol] || 0);
     const enfriamientoOk = tiempoDesdeVenta > 300000;
+    const horaUTC = new Date().getUTCHours();
+    const horaActiva = horaUTC >= 7 && horaUTC <= 22;
     const monedaBloqueada = estaMonedaBloqueada(symbol, 3);
     const capitalSuficiente = capitalActual >= config.CAPITAL_POR_PAR;
     const minNotionalOk = validarMinNotional(config.CAPITAL_POR_PAR);
 
-    let razonNoCompra = "";
+   let razonNoCompra = "";
     if (estrategia === null) razonNoCompra = "Esperando señal técnica";
-    else if (puntuacionIA < notaMinima)
-      razonNoCompra = `🧠 IA Rechaza: Nota ${puntuacionIA}/12`;
+    else if (!horaActiva) razonNoCompra = `🌙 Hora inactiva (${horaUTC}h UTC)`;  
+    else if (puntuacionIA < notaMinima) razonNoCompra = `🧠 IA Rechaza: Nota ${puntuacionIA}/12`;   
     else if (monedaBloqueada) razonNoCompra = `🛡️ KILL SWITCH Activo`;
     else if (!enfriamientoOk)
       razonNoCompra = `Enfriamiento (${Math.ceil((300000 - tiempoDesdeVenta) / 1000)}s)`;
@@ -313,6 +315,7 @@ async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal, macro) { 
 
     const puedeComprar =
       estrategia !== null &&
+      horaActiva &&
       puntuacionIA >= notaMinima &&
       !monedaBloqueada &&
       enfriamientoOk &&
