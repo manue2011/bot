@@ -138,6 +138,8 @@ async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal, macro) { 
     const macd = calcMACD(closes);
     const atr = calcATR(highs, lows, closes);
     const bollinger = calcBollinger(closes, 20, 2);
+    const volatilidad = (atr / precio) * 100;
+    const volatilidadSuficiente = volatilidad > 0.8
 
     // COMPROBACIÓN DE SEGURIDAD
     if (!rsi || !sma20 || !macd || !bollinger || !atr) {
@@ -160,7 +162,7 @@ async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal, macro) { 
       `   RSI: ${rsi.toFixed(2)} | SMA20: $${sma20.toFixed(2)} | MACD: ${macd.alcista ? "↑ alcista" : "↓ bajista"} | ATR: ${atr.toFixed(4)}`,
     );
     console.log(
-      `   Fear&Greed: ${fgValor} (${fgClasificacion}) | Noticias: ${sentimiento} | Macro: ${macro} | 🌊 Marea 4H: ${tendencia4h}`,
+      `   Fear&Greed: ${fgValor} (${fgClasificacion}) | Noticias: ${sentimiento} | Macro: ${macro} | 🌊 Marea 4H: ${tendencia4h} | 📉 Volat: ${volatilidad.toFixed(2)}%`,
     );
 
     // ── LÓGICA DE VENTA ──
@@ -274,21 +276,25 @@ async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal, macro) { 
 
     // ── LÓGICA DE COMPRA (IA DE BOLSILLO) ──
     const esMeanReversion =
-      rsi < 40 && precio < sma20 && bollinger.enBandaInferior && macd.alcista;
+      rsi < 40 && precio < sma20 && bollinger.enBandaInferior && macd.alcista && macro === "BTC_ALCISTA" &&      
+      tendencia4h === "ALCISTA_4H";
+
  const esMomentum =
       rsi > 50 && 
       rsi < 75 && 
       precio > sma20 && 
       macd.alcista && 
       volActual > volMedio * 1.2 && // 🛡️ Exigimos un 20% más de volumen que la media
-      tendencia4h === "ALCISTA_4H"; // 🌊 Marea 4H obligatoria
+      tendencia4h === "ALCISTA_4H" && // 🌊 Marea 4H obligatoria
+      macro === "BTC_ALCISTA" &&
+      volatilidadSuficiente;
     const estrategia = esMeanReversion
       ? "MeanReversion"
       : esMomentum
         ? "Momentum"
         : null;
 
-    const notaMinima = 8;
+    const notaMinima = 10;
     const tiempoDesdeVenta = Date.now() - (ultimoVentaTime[symbol] || 0);
     const enfriamientoOk = tiempoDesdeVenta > 300000;
     const horaUTC = new Date().getUTCHours();
@@ -298,7 +304,17 @@ async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal, macro) { 
     const minNotionalOk = validarMinNotional(config.CAPITAL_POR_PAR);
 
    let razonNoCompra = "";
-    if (estrategia === null) razonNoCompra = "Esperando señal técnica";
+    if (estrategia === null){
+    razonNoCompra =
+    !(rsi > 50 && rsi < 75)         ? `RSI fuera de rango (${rsi.toFixed(0)})` :
+    !(precio > sma20)                ? `Precio bajo SMA20` :
+    !macd.alcista                    ? `MACD bajista` :
+    !(volActual > volMedio * 1.2)    ? `Volumen bajo (${(volActual/volMedio).toFixed(2)}x)` :
+    !(tendencia4h === "ALCISTA_4H")  ? `Marea 4H bajista` :
+    !(macro === "BTC_ALCISTA")       ? `BTC bajista` :
+    !volatilidadSuficiente           ? `Volatilidad baja (${volatilidad.toFixed(2)}%)` :
+    `Sin señal clara`;
+}
     else if (!horaActiva) razonNoCompra = `🌙 Hora inactiva (${horaUTC}h UTC)`;  
     else if (puntuacionIA < notaMinima) razonNoCompra = `🧠 IA Rechaza: Nota ${puntuacionIA}/12`;   
     else if (monedaBloqueada) razonNoCompra = `🛡️ KILL SWITCH Activo`;

@@ -51,13 +51,13 @@ function guardarTrade(trade) {
 // ── CÁLCULOS TÉCNICOS (TP / SL / RESULTADOS) ──
 function calcTakeProfit(precioEntrada) {
   const feeTotal = config.FEE_PCT * 2;
-  const pctNeto = config.TAKE_PROFIT_PCT - feeTotal;
+  const pctNeto = config.TAKE_PROFIT_PCT - feeTotal;s
   return parseFloat((precioEntrada * (1 + pctNeto / 100)).toFixed(2));
 }
 
 function calcStopLoss(precioEntrada, atr) {
   // Versión Pro: Usa ATR si existe, si no usa el % de la config
-  const multiplicadorATR = 2;
+  const multiplicadorATR = 1.5;
   const distanciaSeguridad = atr
     ? atr * multiplicadorATR
     : precioEntrada * (config.STOP_LOSS_PCT / 100);
