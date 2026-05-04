@@ -279,22 +279,20 @@ async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal, macro) { 
       rsi < 40 && precio < sma20 && bollinger.enBandaInferior && macd.alcista && macro === "BTC_ALCISTA" &&      
       tendencia4h === "ALCISTA_4H";
 
- const esMomentum =
-      rsi > 50 && 
-      rsi < 75 && 
-      precio > sma20 && 
-      macd.alcista && 
-      volActual > volMedio * 1.2 && // 🛡️ Exigimos un 20% más de volumen que la media
-      tendencia4h === "ALCISTA_4H" && // 🌊 Marea 4H obligatoria
-      macro === "BTC_ALCISTA" &&
-      volatilidadSuficiente;
+const esMomentum =
+  rsi > 50 && rsi < 75 && 
+  precio > sma20 && 
+  macd.alcista && 
+  volActual > volMedio * 1.1 &&   // 10% es suficiente señal
+  tendencia4h === "ALCISTA_4H" && 
+  macro === "BTC_ALCISTA";
     const estrategia = esMeanReversion
       ? "MeanReversion"
       : esMomentum
         ? "Momentum"
         : null;
 
-    const notaMinima = 10;
+    const notaMinima = 7;
     const tiempoDesdeVenta = Date.now() - (ultimoVentaTime[symbol] || 0);
     const enfriamientoOk = tiempoDesdeVenta > 300000;
     const horaUTC = new Date().getUTCHours();
@@ -309,7 +307,7 @@ async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal, macro) { 
     !(rsi > 50 && rsi < 75)         ? `RSI fuera de rango (${rsi.toFixed(0)})` :
     !(precio > sma20)                ? `Precio bajo SMA20` :
     !macd.alcista                    ? `MACD bajista` :
-    !(volActual > volMedio * 1.2)    ? `Volumen bajo (${(volActual/volMedio).toFixed(2)}x)` :
+    !(volActual > volMedio * 1.1)    ? `Volumen bajo (${(volActual/volMedio).toFixed(2)}x)` :
     !(tendencia4h === "ALCISTA_4H")  ? `Marea 4H bajista` :
     !(macro === "BTC_ALCISTA")       ? `BTC bajista` :
     !volatilidadSuficiente           ? `Volatilidad baja (${volatilidad.toFixed(2)}%)` :

@@ -142,7 +142,7 @@ async function vender(symbol, cantidad) {
     }
   });
 
-  const precioVenta = parseFloat(order.fills[0]?.price || 0);
+const precioVenta = parseFloat(order.cummulativeQuoteQty) / parseFloat(order.executedQty);
 
   console.log(`✅ VENTA exitosa: ${symbol} a $${precioVenta}`);
 

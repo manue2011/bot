@@ -8,7 +8,7 @@ module.exports = {
     : 'https://api.binance.com/api',
 
   // Pares
-  SYMBOLS: process.env.SYMBOLS ? process.env.SYMBOLS.split(',') : ['AVAXUSDT', 'NEARUSDT', 'SOLUSDT'],
+  SYMBOLS: process.env.SYMBOLS ? process.env.SYMBOLS.split(',') : ['AVAXUSDT', 'NEARUSDT', 'SOLUSDT','DOTUSDT', 'MATICUSDT'],
 
   // Capital
   CAPITAL_TOTAL: parseFloat(process.env.CAPITAL_TOTAL || 50),

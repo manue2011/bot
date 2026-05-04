@@ -51,7 +51,7 @@ function guardarTrade(trade) {
 // ── CÁLCULOS TÉCNICOS (TP / SL / RESULTADOS) ──
 function calcTakeProfit(precioEntrada) {
   const feeTotal = config.FEE_PCT * 2;
-  const pctNeto = config.TAKE_PROFIT_PCT - feeTotal;s
+ const pctNeto = config.TAKE_PROFIT_PCT - feeTotal;
   return parseFloat((precioEntrada * (1 + pctNeto / 100)).toFixed(2));
 }
 
@@ -156,6 +156,8 @@ function cargarRachas() {
     SOLUSDT: { contador: 0, ultimoFallo: null },
     NEARUSDT: { contador: 0, ultimoFallo: null },
     AVAXUSDT: { contador: 0, ultimoFallo: null },
+    DOTUSDT:{contador: 0, ultimoFallo:null },
+    MATICUSDT:{contador: 0, ultimoFallo:null }
   };
 }
 

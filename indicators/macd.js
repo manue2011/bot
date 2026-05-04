@@ -8,7 +8,7 @@ function calcEMA(closes, period) {
     ema = closes[i] * k + ema * (1 - k);
   }
 
-  return parseFloat(ema.toFixed(2));
+  return parseFloat(ema.toFixed(4)); // más precisión que .toFixed(2)
 }
 
 function calcMACD(closes) {
@@ -16,33 +16,35 @@ function calcMACD(closes) {
 
   const ema12 = calcEMA(closes, 12);
   const ema26 = calcEMA(closes, 26);
-
   if (!ema12 || !ema26) return null;
 
-  const macdLine = parseFloat((ema12 - ema26).toFixed(2));
+  const macdLine = ema12 - ema26;
 
-  // Línea de señal = EMA9 del MACD
-  // Calculamos MACD para los últimos 9 períodos
   const macdHistory = [];
   for (let i = closes.length - 9; i < closes.length; i++) {
-    const slice = closes.slice(0, i);
+    const slice = closes.slice(0, i + 1);
     const e12 = calcEMA(slice, 12);
     const e26 = calcEMA(slice, 26);
     if (e12 && e26) macdHistory.push(e12 - e26);
   }
 
+  if (macdHistory.length < 9) return null;
+
   const signalLine = calcEMA(macdHistory, 9);
-  const histogram = signalLine
-    ? parseFloat((macdLine - signalLine).toFixed(2))
+  const histogram = signalLine ? macdLine - signalLine : null;
+
+  // 🔥 MEJORADO: alcista si histograma positivo Y subiendo respecto al anterior
+  const histAnterior = macdHistory.length >= 2
+    ? macdHistory[macdHistory.length - 2] - (signalLine || 0)
     : null;
 
-  // alcista = MACD cruza por encima de la señal
-  const alcista = histogram !== null && histogram > 0;
+  const alcista = histogram !== null && histogram > 0 &&
+    (histAnterior === null || histogram > histAnterior);
 
   return {
-    macd: macdLine,
-    signal: signalLine,
-    histogram,
+    macd: parseFloat(macdLine.toFixed(4)),
+    signal: signalLine ? parseFloat(signalLine.toFixed(4)) : null,
+    histogram: histogram ? parseFloat(histogram.toFixed(4)) : null,
     alcista
   };
 }
