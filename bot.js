@@ -209,7 +209,17 @@ async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal, macro) { 
                 ? "📰 Noticias"
                 : "📊 RSI>75";
 
-        const orden = await vender(symbol, pos.cantidad);
+        let orden;
+          for (let intento = 1; intento <= 3; intento++) {
+            try {
+              orden = await vender(symbol, pos.cantidad);
+              break;
+            } catch (err) {
+              console.error(`⚠️ Intento ${intento}/3 fallido para vender ${symbol}: ${err.message}`);
+              if (intento === 3) throw err;
+              await new Promise(r => setTimeout(r, 3000));
+            }
+          }
         const { neto, pct } = calcResultado(
           pos.precioEntrada,
           orden.precio,

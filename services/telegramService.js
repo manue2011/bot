@@ -7,7 +7,8 @@ const CHAT_ID = config.TELEGRAM_CHAT_ID;
 
 async function enviar(mensaje) {
   try {
-    await bot.sendMessage(CHAT_ID, mensaje, { parse_mode: 'HTML' });
+    const mensajeLimpio = mensaje.replace(/<(?!\/?(b|i|u|s|code|pre|a)\b)[^>]*>/gi, '');
+    await bot.sendMessage(CHAT_ID, mensajeLimpio, { parse_mode: 'HTML' });
   } catch (err) {
     console.error('Error Telegram:', err.message);
   }
@@ -72,10 +73,12 @@ function mensajeResumenDiario(datos) {
 }
 
 function mensajeAlertaCritica(motivo, perdida, capitalActual) {
+  // Limpiamos el motivo por si viene con HTML de Binance
+  const motivoLimpio = String(motivo).replace(/<[^>]*>/g, '').substring(0, 200);
   return enviar(`🚨 <b>ALERTA CRÍTICA</b>
 ━━━━━━━━━━━━━━━━━━━━
 Bot pausado automáticamente
-Motivo: ${motivo}
+Motivo: ${motivoLimpio}
 📉 Pérdida del día: <b>-$${perdida}</b>
 💰 Capital actual: <b>${capitalActual} USDT</b>
 ━━━━━━━━━━━━━━━━━━━━
