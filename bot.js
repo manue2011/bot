@@ -1,393 +1,272 @@
-require("dotenv").config();
-const http = require("http");
-const axios = require("axios");
+require('dotenv').config();
+const http = require('http');
 
-// Servidor para que Fly.io mantenga la app viva (Puerto 8080)
-http.createServer((req, res) => res.end("Bot activo")).listen(8080);
+// Servidor para Fly.io
+http.createServer((req, res) => res.end('Bot activo')).listen(8080);
 
-const config = require("./config/settings");
+const config = require('./config/settings');
+const { getCandles, comprar, vender } = require('./services/binanceService');
+const { getNoticiasScore } = require('./services/newsService');
+const { getFearGreed, evaluarFearGreed } = require('./services/fearGreedService');
+const telegram = require('./services/telegramService');
+const { calcRSI } = require('./indicators/rsi');
+const { calcSMA } = require('./indicators/sma');
+const { calcMACD } = require('./indicators/macd');
+const { calcATR } = require('./indicators/atr');
 const {
-  getCandles,
-  getPrecio,
-  getBalance,
-  comprar,
-  vender,
-} = require("./services/binanceService");
-const { getNoticiasScore } = require("./services/newsService");
-const {
-  getFearGreed,
-  evaluarFearGreed,
-} = require("./services/fearGreedService");
-const telegram = require("./services/telegramService");
-const { calcRSI } = require("./indicators/rsi");
-const { calcSMA } = require("./indicators/sma");
-const { calcMACD } = require("./indicators/macd");
-const { calcATR } = require("./indicators/atr");
-const { calcBollinger } = require("./indicators/bollinger");
-const {
-  calcTakeProfit,
-  calcStopLoss,
-  calcResultado,
-  validarMinNotional,
-  superaPerdidaMaxima,
-  generarResumenDiario,
-  guardarTrade,
-  guardarPosiciones,
-  cargarPosiciones,
-  registrarResultadoKillSwitch,
-  estaMonedaBloqueada,
-} = require("./risk/riskManager");
+  calcTakeProfit, calcStopLoss, calcResultado,
+  validarMinNotional, superaPerdidaMaxima,
+  generarResumenDiario, guardarTrade,
+  guardarPosiciones, cargarPosiciones,
+  registrarResultadoKillSwitch, estaMonedaBloqueada
+} = require('./risk/riskManager');
 
-// ── ESTADO DEL BOT CON PERSISTENCIA ──
-// 🟠 FIX 4: Cargar tanto posiciones como el tiempo de última venta
-const datosGuardados = cargarPosiciones() || {};
-let posicionesAbiertas = datosGuardados.posiciones || datosGuardados; // Compatible con tu JSON antiguo
-let ultimoVentaTime = datosGuardados.ultimoVentaTime || {}; // Recuperamos la memoria de enfriamiento
+// ── ESTADO ──
+const datosGuardados = cargarPosiciones();
+let posicionesAbiertas = datosGuardados.posiciones || {};
+let ultimoVentaTime = datosGuardados.ultimoVentaTime || {};
 
-// Cálculo del capital disponible restando lo ya invertido
-const invertido = Object.values(posicionesAbiertas).reduce(
-  (acc, pos) => acc + (pos.usdt || 0),
-  0,
-);
+const invertido = Object.values(posicionesAbiertas).reduce((acc, pos) => acc + (pos.usdt || 0), 0);
 let capitalActual = parseFloat((config.CAPITAL_TOTAL - invertido).toFixed(4));
 let botActivo = true;
 
-// ── FUNCIÓN PARA ENVIAR DATOS AL EXCEL ──
-async function enviarAExcel(datos) {
-  const urlExcel =
-    "https://script.google.com/macros/s/AKfycbx-Enj-nl9WOzTmV60jjllg7BZqFo7RgpFwSy5ofyhKM04TTzgV2IhgWv5Rwi4qFMI/exec";
-
-  const payload = {
-    symbol: datos.symbol,
-    signal: datos.signal || "N/A",
-    notaIA: datos.notaIA || 0,
-    estadoMacro: datos.estadoMacro || "N/A",
-    type: datos.tipo || "VENTA",
-    price: datos.precio,
-    amount: datos.cantidad || 0,
-    profit: datos.ganancia || 0,
-    profitPct: datos.porcentaje || 0,
-    reason: datos.motivo || "Manual",
-  };
-
-  try {
-    await axios.post(urlExcel, payload);
-    console.log(
-      `📊 [EXCEL] Datos completos de ${datos.symbol} enviados correctamente.`,
-    );
-  } catch (error) {
-    console.error("❌ [EXCEL] Error al enviar datos al Excel:", error.message);
-  }
-}
-
-// ── IA DE BOLSILLO: ANALISTA DE TENDENCIA 4H 🌊 ──
+// ── TENDENCIA 4H ──
 async function obtenerTendencia4H(symbol) {
   try {
-    // Pedimos 60 velas de 4h usando tu súper función (que lee de la API real)
-    const candles4h = await getCandles(symbol, "4h", 60);
-    
-    if (!candles4h || candles4h.length < 50) return "ERROR_TENDENCIA";
-
-    const closes4h = candles4h.map((c) => parseFloat(c[4]));
+    const candles4h = await getCandles(symbol, '4h', 60);
+    if (!candles4h || candles4h.length < 50) return 'ERROR';
+    const closes4h = candles4h.map(c => parseFloat(c[4]));
+    const sma50 = calcSMA(closes4h, 50);
     const precioActual = closes4h[closes4h.length - 1];
-    
-    const sma50_4h = calcSMA(closes4h, 50);
-
-    return precioActual > sma50_4h ? "ALCISTA_4H" : "BAJISTA_4H";
+    return precioActual > sma50 ? 'ALCISTA_4H' : 'BAJISTA_4H';
   } catch (e) {
-    console.error(`❌ Error en tendencia 4H para ${symbol}:`, e.message);
-    return "ERROR_TENDENCIA";
+    console.error(`❌ Error tendencia 4H ${symbol}:`, e.message);
+    return 'ERROR';
   }
 }
-// ── IA DE BOLSILLO: ANALISTA MACRO ──
-async function obtenerEstadoMacro() {
+
+// ── MACRO BTC ──
+async function obtenerMacro() {
   try {
-    const candlesBTC = await getCandles("BTCUSDT");
-    const closesBTC = candlesBTC.map((c) => parseFloat(c[4]));
-    const precioBTC = closesBTC[closesBTC.length - 1];
-    const sma20BTC = calcSMA(closesBTC, 20);
-    return precioBTC > sma20BTC ? "BTC_ALCISTA" : "BTC_BAJISTA";
+    const candles = await getCandles('BTCUSDT', '1d', 30);
+    const closes = candles.map(c => parseFloat(c[4]));
+    const sma20 = calcSMA(closes, 20);
+    const precioActual = closes[closes.length - 1];
+    return precioActual > sma20 ? 'BTC_ALCISTA' : 'BTC_BAJISTA';
   } catch (e) {
-    return "ERROR_MACRO";
+    return 'ERROR_MACRO';
   }
 }
 
-// ── MOTOR PRINCIPAL ──
-async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal, macro) {  if (!botActivo) return;
+// ── PROCESADO POR PAR ──
+async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal, macro) {
+  if (!botActivo) return;
   console.log(`🔍 Procesando ${symbol}...`);
 
   try {
-    // 1. DESCARGA DE DATOS
-    const candles = await getCandles(symbol);
-    if (!candles || candles.length < 30) {
-      console.log(`⚠️ ${symbol}: datos insuficientes de Binance`);
+    // 1. DATOS
+    const candles = await getCandles(symbol, '1h', 60);
+    if (!candles || candles.length < 40) {
+      console.log(`⚠️ ${symbol}: datos insuficientes`);
       return;
     }
 
-    // 2. EXTRACCIÓN DE PRECIOS
-    const highs = candles.map((c) => parseFloat(c[2]));
-    const lows = candles.map((c) => parseFloat(c[3]));
-    const closes = candles.map((c) => parseFloat(c[4]));
-    const volumenes = candles.map((c) => parseFloat(c[5]));
+    const highs = candles.map(c => parseFloat(c[2]));
+    const lows = candles.map(c => parseFloat(c[3]));
+    const closes = candles.map(c => parseFloat(c[4]));
+    const volumenes = candles.map(c => parseFloat(c[5]));
+
     const precio = closes[closes.length - 1];
-    const volActual = volumenes[volumenes.length - 1]; // 🔥 VOLUMEN DE LA VELA ACTUAL
-    const volMedio = volumenes.slice(-20).reduce((a, b) => a + b, 0) / 20; // 🔥 MEDIA DE 20 PERIODOS
-    // 3. CÁLCULO DE INDICADORES
+    const volActual = volumenes[volumenes.length - 1];
+    const volMedio = volumenes.slice(-20).reduce((a, b) => a + b, 0) / 20;
+
+    // 2. INDICADORES
     const rsi = calcRSI(closes, 14);
     const sma20 = calcSMA(closes, 20);
+    const sma50 = calcSMA(closes, 50);
     const macd = calcMACD(closes);
     const atr = calcATR(highs, lows, closes);
-    const bollinger = calcBollinger(closes, 20, 2);
-    const volatilidad = (atr / precio) * 100;
-    const volatilidadSuficiente = volatilidad > 0.8
 
-    // COMPROBACIÓN DE SEGURIDAD
-    if (!rsi || !sma20 || !macd || !bollinger || !atr) {
-      console.log(`⚠️ ${symbol}: Error calculando indicadores`);
+    if (!rsi || !sma20 || !sma50 || !macd || !atr) {
+      console.log(`⚠️ ${symbol}: error calculando indicadores`);
       return;
     }
 
     const { sentimiento } = await getNoticiasScore(symbol);
     const tendencia4h = await obtenerTendencia4H(symbol);
-    // ── CÁLCULO DE LA NOTA IA ──
-    let puntuacionIA = 0;
-    if (tendencia4h === "ALCISTA_4H") puntuacionIA += 3; // 🔥 Regla Pro
-    if (precio > sma20) puntuacionIA += 2;
-    if (rsi > 45 && rsi < 65) puntuacionIA += 2;
-    if (macd.alcista) puntuacionIA += 2;
-    if (sentimiento === "POSITIVO") puntuacionIA += 1;
-    if (macro === "BTC_ALCISTA") puntuacionIA += 2;
-    console.log(`\n📊 ${symbol} | $${precio}`);
-    console.log(
-      `   RSI: ${rsi.toFixed(2)} | SMA20: $${sma20.toFixed(2)} | MACD: ${macd.alcista ? "↑ alcista" : "↓ bajista"} | ATR: ${atr.toFixed(4)}`,
-    );
-    console.log(
-      `   Fear&Greed: ${fgValor} (${fgClasificacion}) | Noticias: ${sentimiento} | Macro: ${macro} | 🌊 Marea 4H: ${tendencia4h} | 📉 Volat: ${volatilidad.toFixed(2)}%`,
-    );
+
+    // 3. PUNTUACIÓN IA
+    let puntuacion = 0;
+    if (tendencia4h === 'ALCISTA_4H') puntuacion += 3;
+    if (macro === 'BTC_ALCISTA') puntuacion += 2;
+    if (precio > sma20) puntuacion += 2;
+    if (rsi > 45 && rsi < 68) puntuacion += 2;
+    if (macd.alcista) puntuacion += 2;
+    if (sentimiento === 'POSITIVO') puntuacion += 1;
+
+    console.log(`\n📊 ${symbol} | $${precio.toFixed(2)}`);
+    console.log(`   RSI: ${rsi} | SMA20: $${sma20} | MACD: ${macd.alcista ? '↑' : '↓'} | ATR: ${atr}`);
+    console.log(`   F&G: ${fgValor} | Noticias: ${sentimiento} | Macro: ${macro} | 4H: ${tendencia4h} | Nota: ${puntuacion}/12`);
 
     // ── LÓGICA DE VENTA ──
     if (posicionesAbiertas[symbol]) {
       const pos = posicionesAbiertas[symbol];
-      const gananciaActualPct =
-        ((precio - pos.precioEntrada) / pos.precioEntrada) * 100;
+      const gananciaActualPct = ((precio - pos.precioEntrada) / pos.precioEntrada) * 100;
 
-      // 🛡️ TRAILING STOP DINÁMICO
-      if (gananciaActualPct >= 2.0) {
-        const distanciaSeguridad = 0.985; // Mantenemos un 2% de margen
-
-        // 1. Calculamos el suelo que sigue al precio
-        const nuevoStopSugerido = precio * distanciaSeguridad;
-        // 2. Calculamos el mínimo para no perder (Entrada + 0.5%)
+      // TRAILING STOP
+      if (gananciaActualPct >= config.TRAILING_ACTIVACION_PCT) {
+        const nuevoStop = precio * (1 - config.TRAILING_DISTANCIA_PCT / 100);
         const stopAsegurado = pos.precioEntrada * 1.005;
+        const mejorStop = Math.max(nuevoStop, stopAsegurado);
 
-        // El bot elige el más alto de los dos para protegerte al máximo
-        const mejorStop = Math.max(nuevoStopSugerido, stopAsegurado);
-
-        // Solo actualizamos si el nuevo stop es realmente superior al que ya teníamos
         if (mejorStop > pos.stopLoss) {
-          pos.stopLoss = mejorStop;
+          pos.stopLoss = parseFloat(mejorStop.toFixed(2));
           guardarPosiciones({ posiciones: posicionesAbiertas, ultimoVentaTime });
-          console.log(
-            `📈 [TRAILING] Subiendo suelo en ${symbol} a $${pos.stopLoss.toFixed(2)} (Profit: ${gananciaActualPct.toFixed(2)}%)`,
-          );
+          console.log(`📈 [TRAILING] ${symbol} → suelo $${pos.stopLoss} (+${gananciaActualPct.toFixed(2)}%)`);
         }
       }
 
       const debeVender =
         precio >= pos.takeProfit ||
         precio <= pos.stopLoss ||
-       // (rsi > 75 && precio > sma20) ||
-        sentimiento === "NEGATIVO";
+        sentimiento === 'NEGATIVO';
 
       if (debeVender) {
         const motivo =
-          precio >= pos.takeProfit
-            ? "🎯 Take-Profit"
-            : precio <= pos.stopLoss
-              ? "🛡️ Stop-Loss"
-              : sentimiento === "NEGATIVO"
-                ? "📰 Noticias"
-                : "📊 RSI>75";
+          precio >= pos.takeProfit ? '🎯 Take-Profit' :
+          precio <= pos.stopLoss ? '🛡️ Stop-Loss' :
+          '📰 Noticias';
 
+        // Reintento x3
         let orden;
-          for (let intento = 1; intento <= 3; intento++) {
-            try {
-              orden = await vender(symbol, pos.cantidad);
-              break;
-            } catch (err) {
-              console.error(`⚠️ Intento ${intento}/3 fallido para vender ${symbol}: ${err.message}`);
-              if (intento === 3) throw err;
-              await new Promise(r => setTimeout(r, 3000));
-            }
+        for (let intento = 1; intento <= 3; intento++) {
+          try {
+            orden = await vender(symbol, pos.cantidad);
+            break;
+          } catch (err) {
+            console.error(`⚠️ Intento ${intento}/3 fallido ${symbol}: ${err.message}`);
+            if (intento === 3) throw err;
+            await new Promise(r => setTimeout(r, 3000));
           }
-        const { neto, pct } = calcResultado(
-          pos.precioEntrada,
-          orden.precio,
-          pos.cantidad,
-        );
+        }
+
+        const { neto, pct } = calcResultado(pos.precioEntrada, orden.precio, pos.cantidad);
 
         registrarResultadoKillSwitch(symbol, neto);
-        capitalActual = parseFloat(
-          (capitalActual + neto + (pos.usdt || 0)).toFixed(4),
-        );
+        capitalActual = parseFloat((capitalActual + neto + (pos.usdt || 0)).toFixed(4));
         ultimoVentaTime[symbol] = Date.now();
-
-        // AQUÍ EL BOT RECUERDA Y ENVÍA LA NOTA AL EXCEL
-        await enviarAExcel({
-          symbol: symbol,
-          signal: pos.estrategia,
-          notaIA: pos.notaIA,
-          estadoMacro: `${pos.estadoMacro} | ${pos.tendencia4h}`,
-          tipo: "VENTA",
-          precio: orden.precio,
-          cantidad: pos.cantidad,
-          ganancia: neto,
-          porcentaje: pct,
-          motivo: motivo,
-        });
 
         delete posicionesAbiertas[symbol];
         guardarPosiciones({ posiciones: posicionesAbiertas, ultimoVentaTime });
 
         guardarTrade({
-          lado: "VENTA",
-          symbol,
+          lado: 'VENTA', symbol,
           precioEntrada: pos.precioEntrada,
           precioSalida: orden.precio,
           cantidad: pos.cantidad,
-          resultado: neto,
-          pct,
-          motivo,
-          timestamp: new Date().toISOString(),
+          resultado: neto, pct, motivo,
+          timestamp: new Date().toISOString()
         });
 
         await telegram.mensajeVenta({
           symbol,
           precioEntrada: pos.precioEntrada,
           precioSalida: orden.precio,
-          resultado: neto,
-          pct,
-          capitalActual,
-          motivo,
+          resultado: neto, pct,
+          capitalActual, motivo
         });
 
         const { supera, perdidaHoy } = superaPerdidaMaxima();
         if (supera) {
           botActivo = false;
-          await telegram.mensajeAlertaCritica(
-            "Pérdida máxima diaria",
-            perdidaHoy,
-            capitalActual,
-          );
+          await telegram.mensajeAlertaCritica('Pérdida máxima diaria', perdidaHoy, capitalActual);
         }
       }
       return;
     }
 
-    // ── LÓGICA DE COMPRA (IA DE BOLSILLO) ──
-    const esMeanReversion =
-      rsi < 40 && precio < sma20 && bollinger.enBandaInferior && macd.alcista && macro === "BTC_ALCISTA" &&      
-      tendencia4h === "ALCISTA_4H";
-
-const esMomentum =
-  rsi > 50 && rsi < 75 && 
-  precio > sma20 && 
-  macd.alcista && 
-  volActual > volMedio * 1.1 &&   // 10% es suficiente señal
-  tendencia4h === "ALCISTA_4H" && 
-  macro === "BTC_ALCISTA";
-    const estrategia = esMeanReversion
-      ? "MeanReversion"
-      : esMomentum
-        ? "Momentum"
-        : null;
-
-    const notaMinima = 7;
-    const tiempoDesdeVenta = Date.now() - (ultimoVentaTime[symbol] || 0);
-    const enfriamientoOk = tiempoDesdeVenta > 300000;
+    // ── LÓGICA DE COMPRA ──
     const horaUTC = new Date().getUTCHours();
-    const horaActiva = horaUTC >= 7 && horaUTC <= 22;
+    const horaActiva = horaUTC >= config.HORA_INICIO_UTC && horaUTC <= config.HORA_FIN_UTC;
+
+    const esMomentum =
+      rsi > 50 && rsi < 70 &&
+      precio > sma20 &&
+      precio > sma50 &&
+      macd.alcista &&
+      volActual > volMedio * 1.1 &&
+      tendencia4h === 'ALCISTA_4H' &&
+      macro === 'BTC_ALCISTA';
+
+    const esMeanReversion =
+      rsi < 38 &&
+      precio < sma20 &&
+      macd.alcista &&
+      tendencia4h === 'ALCISTA_4H' &&
+      macro === 'BTC_ALCISTA';
+
+    const estrategia = esMomentum ? 'Momentum' : esMeanReversion ? 'MeanReversion' : null;
+
+    const tiempoDesdeVenta = Date.now() - (ultimoVentaTime[symbol] || 0);
+    const enfriamientoOk = tiempoDesdeVenta > 300000; // 5 minutos
     const monedaBloqueada = estaMonedaBloqueada(symbol, 3);
     const capitalSuficiente = capitalActual >= config.CAPITAL_POR_PAR;
+    const maxTradesOk = Object.keys(posicionesAbiertas).length < config.MAX_OPEN_TRADES;
     const minNotionalOk = validarMinNotional(config.CAPITAL_POR_PAR);
 
-   let razonNoCompra = "";
-    if (estrategia === null){
-    razonNoCompra =
-    !(rsi > 50 && rsi < 75)         ? `RSI fuera de rango (${rsi.toFixed(0)})` :
-    !(precio > sma20)                ? `Precio bajo SMA20` :
-    !macd.alcista                    ? `MACD bajista` :
-    !(volActual > volMedio * 1.1)    ? `Volumen bajo (${(volActual/volMedio).toFixed(2)}x)` :
-    !(tendencia4h === "ALCISTA_4H")  ? `Marea 4H bajista` :
-    !(macro === "BTC_ALCISTA")       ? `BTC bajista` :
-    !volatilidadSuficiente           ? `Volatilidad baja (${volatilidad.toFixed(2)}%)` :
-    `Sin señal clara`;
-}
-    else if (!horaActiva) razonNoCompra = `🌙 Hora inactiva (${horaUTC}h UTC)`;  
-    else if (puntuacionIA < notaMinima) razonNoCompra = `🧠 IA Rechaza: Nota ${puntuacionIA}/12`;   
-    else if (monedaBloqueada) razonNoCompra = `🛡️ KILL SWITCH Activo`;
-    else if (!enfriamientoOk)
-      razonNoCompra = `Enfriamiento (${Math.ceil((300000 - tiempoDesdeVenta) / 1000)}s)`;
-    else if (sentimiento === "NEGATIVO") razonNoCompra = `Noticias NEGATIVAS`;
-    else if (fgSeñal === "PELIGRO")
-      razonNoCompra = `Codicia Extrema (${fgValor})`;
-    else if (!capitalSuficiente)
-      razonNoCompra = `Saldo insuficiente ($${capitalActual})`;
-    else if (Object.keys(posicionesAbiertas).length >= config.MAX_OPEN_TRADES)
-      razonNoCompra = `Máximo de trades`;
-    else if (!minNotionalOk) razonNoCompra = `Mínimo de Binance no alcanzado`;
+    let razon = '';
+    if (!estrategia) razon = `Sin señal (RSI:${rsi} MACD:${macd.alcista ? '↑' : '↓'} 4H:${tendencia4h} Macro:${macro})`;
+    else if (!horaActiva) razon = `🌙 Hora inactiva (${horaUTC}h UTC)`;
+    else if (puntuacion < 8) razon = `🧠 Nota insuficiente (${puntuacion}/12)`;
+    else if (monedaBloqueada) razon = `🛡️ Kill Switch activo`;
+    else if (!enfriamientoOk) razon = `⏳ Enfriamiento (${Math.ceil((300000 - tiempoDesdeVenta) / 1000)}s)`;
+    else if (sentimiento === 'NEGATIVO') razon = `📰 Noticias negativas`;
+    else if (fgSeñal === 'PELIGRO') razon = `😱 Codicia extrema (${fgValor})`;
+    else if (!capitalSuficiente) razon = `💰 Capital insuficiente ($${capitalActual})`;
+    else if (!maxTradesOk) razon = `📦 Máximo trades abiertos`;
+    else if (!minNotionalOk) razon = `❌ Mínimo Binance no alcanzado`;
 
     const puedeComprar =
       estrategia !== null &&
       horaActiva &&
-      puntuacionIA >= notaMinima &&
+      puntuacion >= 8 &&
       !monedaBloqueada &&
       enfriamientoOk &&
-      sentimiento !== "NEGATIVO" &&
-      fgSeñal !== "PELIGRO" &&
+      sentimiento !== 'NEGATIVO' &&
+      fgSeñal !== 'PELIGRO' &&
       capitalSuficiente &&
-      Object.keys(posicionesAbiertas).length < config.MAX_OPEN_TRADES &&
+      maxTradesOk &&
       minNotionalOk;
 
-  if (puedeComprar) {
-      console.log(`🟢 COMPRANDO ${symbol} (${estrategia})...`);
-      
-      // 🔴 FIX 1: RESERVA SÍNCRONA DE CAPITAL
+    if (puedeComprar) {
+      console.log(`🟢 COMPRANDO ${symbol} (${estrategia}) Nota:${puntuacion}/12`);
       capitalActual -= config.CAPITAL_POR_PAR;
 
       try {
         const orden = await comprar(symbol, config.CAPITAL_POR_PAR);
-
         const stopLoss = calcStopLoss(orden.precio, atr);
         const takeProfit = calcTakeProfit(orden.precio);
 
         posicionesAbiertas[symbol] = {
           precioEntrada: orden.precio,
           cantidad: orden.cantidad,
-          stopLoss,
-          takeProfit,
-          estrategia,
-          notaIA: puntuacionIA,
-          estadoMacro: macro, 
+          stopLoss, takeProfit, estrategia,
+          notaIA: puntuacion,
           usdt: config.CAPITAL_POR_PAR,
-          tendencia4h,
-          timestamp: new Date().toISOString(),
+          tendencia4h, macro,
+          timestamp: new Date().toISOString()
         };
 
         guardarPosiciones({ posiciones: posicionesAbiertas, ultimoVentaTime });
-        
         capitalActual = parseFloat(capitalActual.toFixed(4));
 
         guardarTrade({
-          lado: "COMPRA",
-          symbol,
+          lado: 'COMPRA', symbol,
           precioEntrada: orden.precio,
           cantidad: orden.cantidad,
           usdt: config.CAPITAL_POR_PAR,
-          stopLoss,
-          takeProfit,
-          estrategia,
-          timestamp: new Date().toISOString(),
+          stopLoss, takeProfit, estrategia,
+          timestamp: new Date().toISOString()
         });
 
         await telegram.mensajeCompra({
@@ -395,12 +274,18 @@ const esMomentum =
           precioEntrada: orden.precio,
           cantidad: orden.cantidad,
           usdt: config.CAPITAL_POR_PAR,
-          stopLoss,
-          takeProfit,
+          stopLoss, takeProfit,
           rsi: rsi.toFixed(2),
           macd: macd.alcista,
-          estrategia,
+          tendencia4h, fgValor
         });
+
+      } catch (err) {
+        console.error(`❌ Falló compra ${symbol}:`, err.message);
+        capitalActual += config.CAPITAL_POR_PAR;
+        capitalActual = parseFloat(capitalActual.toFixed(4));
+        await telegram.mensajeAlertaCritica(`Error compra ${symbol}`, err.message, capitalActual);
+      }
 
       } catch (err) {
         // 🔴 FIX 1 (Recuperación) y FIX 3 (Alertas Silenciosas)
@@ -411,38 +296,32 @@ const esMomentum =
         await telegram.mensajeAlertaCritica(`Error en compra ${symbol}`, err.message, capitalActual);
       } // <-- ESTA ES LA LLAVE QUE FALTABA (Cierra el catch)
     } else {
-      console.log(`   ⏳ Estado: ${razonNoCompra}`);
+      console.log(`   ⏳ ${razon}`);
     }
-  } catch (err) { // <-- ESTE CATCH ES EL GENERAL DE LA FUNCIÓN procesarPar
-    console.error(`❌ Error general en ${symbol}:`, err.message);
-    // FIX 3: Avisar a Telegram si la función entera peta
-    await telegram.mensajeAlertaCritica(`Fallo grave en ${symbol}`, err.message, capitalActual);
+
+  } catch (err) {
+    console.error(`❌ Error general ${symbol}:`, err.message);
+    await telegram.mensajeAlertaCritica(`Fallo grave ${symbol}`, err.message, capitalActual);
   }
 }
 
-// ── CICLOS DE MERCADO ──
+// ── CICLO PRINCIPAL ──
 async function tick() {
   if (!botActivo) return;
-  console.log(
-    `\n⏰ ${new Date().toLocaleTimeString("es-ES")} — Ciclo de mercado...`,
-  );
-  
-  // 1. Obtenemos el Miedo/Codicia (1 llamada)
+  console.log(`\n⏰ ${new Date().toLocaleTimeString('es-ES')} — Ciclo de mercado...`);
+
   const { valor: fgValor, clasificacion: fgClasificacion } = await getFearGreed();
   const { señal: fgSeñal } = evaluarFearGreed(fgValor);
-  
-  // 🟠 FIX 2: OBTENER MACRO UNA SOLA VEZ
-  // Preguntamos a Binance por BTC una sola vez por ciclo, no por cada moneda.
-  const macro = await obtenerEstadoMacro(); 
+  const macro = await obtenerMacro();
 
-  // 2. Pasamos TODOS los datos a procesarPar
   await Promise.all(
-    config.SYMBOLS.map((symbol) =>
-      procesarPar(symbol, fgValor, fgClasificacion, fgSeñal, macro) // <-- Añadido macro aquí
-    ),
+    config.SYMBOLS.map(symbol =>
+      procesarPar(symbol, fgValor, fgClasificacion, fgSeñal, macro)
+    )
   );
 }
 
+// ── RESUMEN DIARIO ──
 function programarResumenDiario() {
   const ahora = new Date();
   const medianoche = new Date(ahora);
@@ -456,26 +335,28 @@ function programarResumenDiario() {
   }, delay);
 }
 
+// ── ARRANQUE ──
 async function iniciar() {
-  console.log("🤖 Crypto Bot Ultra v4.0 - IA de Bolsillo & Kill Switch READY");
-  console.log(`   Capital Disponible: $${capitalActual.toFixed(2)} USDT`);
+  console.log('🤖 Crypto Bot v5.0 — BTC/ETH Edition');
+  console.log(`   Capital: $${capitalActual.toFixed(2)} USDT`);
+  console.log(`   Modo: ${config.BINANCE_TESTNET ? 'TESTNET' : '🔴 REAL'}`);
 
   if (telegram.bot) {
     telegram.bot.onText(/\/status/, (msg) => {
-      const inv = Object.values(posicionesAbiertas).reduce(
-        (acc, p) => acc + (p.usdt || 0),
-        0,
-      );
-      let txt = `📊 <b>ESTADO DEL BOT</b>\n━━━━━━━━━━━━━━━━━━━━\n💰 Total: <b>$${(capitalActual + inv).toFixed(2)}</b>\n💵 Libre: $${capitalActual.toFixed(2)}\n📦 Abiertas: ${Object.keys(posicionesAbiertas).length}/3\n\n`;
+      const inv = Object.values(posicionesAbiertas).reduce((acc, p) => acc + (p.usdt || 0), 0);
+      let txt = `📊 <b>ESTADO BOT v5.0</b>\n━━━━━━━━━━━━━━━━━━━━\n`;
+      txt += `💰 Total: <b>$${(capitalActual + inv).toFixed(2)}</b>\n`;
+      txt += `💵 Libre: $${capitalActual.toFixed(2)}\n`;
+      txt += `📦 Posiciones: ${Object.keys(posicionesAbiertas).length}/${config.MAX_OPEN_TRADES}\n\n`;
       if (Object.keys(posicionesAbiertas).length > 0) {
         txt += `📝 <b>DETALLE:</b>\n`;
         Object.entries(posicionesAbiertas).forEach(([sym, p]) => {
-          txt += `• <b>${sym}</b>: $${p.precioEntrada} (Inv: $${p.usdt})\n`;
+          txt += `• <b>${sym}</b>: entrada $${p.precioEntrada} | SL $${p.stopLoss} | TP $${p.takeProfit}\n`;
         });
       } else {
-        txt += `<i>No hay posiciones abiertas.</i>`;
+        txt += `<i>Sin posiciones abiertas.</i>`;
       }
-      telegram.bot.sendMessage(msg.chat.id, txt, { parse_mode: "HTML" });
+      telegram.bot.sendMessage(msg.chat.id, txt, { parse_mode: 'HTML' });
     });
   }
 

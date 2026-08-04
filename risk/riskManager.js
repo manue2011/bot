@@ -18,54 +18,58 @@ function guardarPosiciones(posiciones) {
   fs.writeFileSync(POSICIONES_PATH, JSON.stringify(posiciones, null, 2));
 }
 
+const TRADES_PATH = path.join(process.cwd(), 'logs/trades.json');
+const SUMMARY_PATH = path.join(process.cwd(), 'logs/daily_summary.json');
+const POSICIONES_PATH = path.join(process.cwd(), 'logs/posiciones.json');
+const KILL_SWITCH_PATH = path.join(process.cwd(), 'logs/kill_switch.json');
+
+// ── PERSISTENCIA ──
+function guardarPosiciones(data) {
+  const logsDir = path.join(process.cwd(), 'logs');
+  if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir, { recursive: true });
+  fs.writeFileSync(POSICIONES_PATH, JSON.stringify(data, null, 2));
+}
+
 function cargarPosiciones() {
   try {
-    if (fs.existsSync(POSICIONES_PATH)) {
-      const data = fs.readFileSync(POSICIONES_PATH, "utf8");
-      return JSON.parse(data) || {};
-    }
+    if (fs.existsSync(POSICIONES_PATH))
+      return JSON.parse(fs.readFileSync(POSICIONES_PATH, 'utf8')) || {};
   } catch (err) {
-    console.error("⚠️ Error cargando posiciones.json:", err.message);
+    console.error('⚠️ Error cargando posiciones:', err.message);
   }
   return {};
 }
 
-// ── GESTIÓN DE TRADES ──
+// ── TRADES ──
 function cargarTrades() {
   try {
-    const data = fs.readFileSync(TRADES_PATH, "utf8");
-    return JSON.parse(data) || [];
-  } catch {
-    return [];
-  }
+    return JSON.parse(fs.readFileSync(TRADES_PATH, 'utf8')) || [];
+  } catch { return []; }
 }
 
 function guardarTrade(trade) {
-  const logsDir = path.join(process.cwd(), "logs");
+  const logsDir = path.join(process.cwd(), 'logs');
   if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir, { recursive: true });
   const trades = cargarTrades();
   trades.push(trade);
   fs.writeFileSync(TRADES_PATH, JSON.stringify(trades, null, 2));
 }
 
-// ── CÁLCULOS TÉCNICOS (TP / SL / RESULTADOS) ──
+// ── CÁLCULOS ──
 function calcTakeProfit(precioEntrada) {
   const feeTotal = config.FEE_PCT * 2;
- const pctNeto = config.TAKE_PROFIT_PCT - feeTotal;
+  const pctNeto = config.TAKE_PROFIT_PCT - feeTotal;
   return parseFloat((precioEntrada * (1 + pctNeto / 100)).toFixed(2));
 }
 
 function calcStopLoss(precioEntrada, atr) {
-  // Versión Pro: Usa ATR si existe, si no usa el % de la config
-  const multiplicadorATR = 1.5;
-  const distanciaSeguridad = atr
-    ? atr * multiplicadorATR
+  const distancia = atr
+    ? atr * 1.5
     : precioEntrada * (config.STOP_LOSS_PCT / 100);
-  const stopLoss = precioEntrada - distanciaSeguridad;
-
-  // Suelo de seguridad absoluta: Máximo 3.5% de pérdida
-  const precioMinimoSeguro = precioEntrada * 0.975;
-  return parseFloat(Math.max(stopLoss, precioMinimoSeguro).toFixed(2));
+  const stopATR = precioEntrada - distancia;
+  const stopMaximo = precioEntrada * (1 - config.STOP_LOSS_PCT / 100);
+  // Elegimos el más cercano para limitar pérdida máxima al 2%
+  return parseFloat(Math.max(stopATR, stopMaximo).toFixed(2));
 }
 
 function calcResultado(precioEntrada, precioSalida, cantidad) {
@@ -79,19 +83,16 @@ function calcResultado(precioEntrada, precioSalida, cantidad) {
   return { neto, pct };
 }
 
-// ── VALIDACIONES Y LÍMITES DIARIOS ──
 function validarMinNotional(cantidadUSDT) {
   return cantidadUSDT >= config.MIN_ORDER_USDT;
 }
 
+// ── PÉRDIDA DIARIA ──
 function calcPerdidaDiaria() {
   const trades = cargarTrades();
   const hoy = new Date().toDateString();
-  const tradesHoy = trades.filter(
-    (t) => new Date(t.timestamp).toDateString() === hoy && t.lado === "VENTA",
-  );
-  const perdida = tradesHoy
-    .filter((t) => t.resultado < 0)
+  const perdida = trades
+    .filter(t => new Date(t.timestamp).toDateString() === hoy && t.lado === 'VENTA' && t.resultado < 0)
     .reduce((acc, t) => acc + Math.abs(t.resultado), 0);
   return parseFloat(perdida.toFixed(4));
 }
@@ -107,119 +108,82 @@ function superaPerdidaMaxima() {
   };
 }
 
+// ── RESUMEN DIARIO ──
 function generarResumenDiario(capitalActual) {
   const trades = cargarTrades();
   const hoy = new Date().toDateString();
-  const tradesHoy = trades.filter(
-    (t) => new Date(t.timestamp).toDateString() === hoy && t.lado === "VENTA",
+  const tradesHoy = trades.filter(t =>
+    new Date(t.timestamp).toDateString() === hoy && t.lado === 'VENTA'
   );
-  const ganadoras = tradesHoy.filter((t) => t.resultado >= 0).length;
+  const ganadoras = tradesHoy.filter(t => t.resultado >= 0).length;
   const total = tradesHoy.length;
-  const gananciaDia = parseFloat(
-    tradesHoy.reduce((acc, t) => acc + t.resultado, 0).toFixed(4),
-  );
-  const pctAciertos =
-    total > 0 ? parseFloat(((ganadoras / total) * 100).toFixed(1)) : 0;
+  const gananciaDia = parseFloat(tradesHoy.reduce((acc, t) => acc + t.resultado, 0).toFixed(4));
+  const pctAciertos = total > 0 ? parseFloat(((ganadoras / total) * 100).toFixed(1)) : 0;
 
-  const resumen = {
-    fecha: new Date().toLocaleDateString("es-ES"),
-    ganadoras,
-    perdedoras: total - ganadoras,
-    total,
-    gananciaDia,
-    capitalActual,
-    pctAciertos,
-  };
+  const resumen = { fecha: new Date().toLocaleDateString('es-ES'), ganadoras, perdedoras: total - ganadoras, total, gananciaDia, capitalActual, pctAciertos };
 
   let summaries = [];
   try {
     if (fs.existsSync(SUMMARY_PATH))
-      summaries = JSON.parse(fs.readFileSync(SUMMARY_PATH, "utf8")) || [];
+      summaries = JSON.parse(fs.readFileSync(SUMMARY_PATH, 'utf8')) || [];
   } catch {}
   summaries.push(resumen);
   fs.writeFileSync(SUMMARY_PATH, JSON.stringify(summaries, null, 2));
   return resumen;
 }
 
-// ── LÓGICA KILL SWITCH CON ENFRIAMIENTO (12H) ──
-let rachasPerdidas = cargarRachas();
-const HORAS_BLOQUEO = 3; // Horas que bloquea la moneda tras 3 pérdidas consecutivas
+// ── KILL SWITCH ──
+let rachas = cargarRachas();
+const HORAS_BLOQUEO = 4;
 
 function cargarRachas() {
   try {
-    if (fs.existsSync(KILL_SWITCH_FILE))
-      return JSON.parse(fs.readFileSync(KILL_SWITCH_FILE, "utf8"));
-  } catch (err) {
-    console.error("❌ Error leyendo Kill Switch:", err.message);
-  }
+    if (fs.existsSync(KILL_SWITCH_PATH))
+      return JSON.parse(fs.readFileSync(KILL_SWITCH_PATH, 'utf8'));
+  } catch {}
   return {
-    SOLUSDT: { contador: 0, ultimoFallo: null },
-    NEARUSDT: { contador: 0, ultimoFallo: null },
-    AVAXUSDT: { contador: 0, ultimoFallo: null },
-    DOTUSDT:{contador: 0, ultimoFallo:null },
-    MATICUSDT:{contador: 0, ultimoFallo:null }
+    BTCUSDT: { contador: 0, ultimoFallo: null },
+    ETHUSDT: { contador: 0, ultimoFallo: null }
   };
 }
 
 function guardarRachas() {
-  fs.writeFileSync(KILL_SWITCH_FILE, JSON.stringify(rachasPerdidas, null, 2));
+  fs.writeFileSync(KILL_SWITCH_PATH, JSON.stringify(rachas, null, 2));
 }
 
 function registrarResultadoKillSwitch(symbol, neto) {
+  if (!rachas[symbol]) rachas[symbol] = { contador: 0, ultimoFallo: null };
   if (neto < 0) {
-    rachasPerdidas[symbol] = {
-      contador: (rachasPerdidas[symbol]?.contador || 0) + 1,
-      ultimoFallo: Date.now(),
-    };
-    console.log(
-      `⚠️ Racha perdedora de ${symbol}: ${rachasPerdidas[symbol].contador}`,
-    );
-  } else if (neto > 0) {
-    rachasPerdidas[symbol] = { contador: 0, ultimoFallo: null };
-    console.log(`✅ Racha de ${symbol} reseteada por ganancia.`);
+    rachas[symbol].contador++;
+    rachas[symbol].ultimoFallo = Date.now();
+    console.log(`⚠️ Racha perdedora ${symbol}: ${rachas[symbol].contador}`);
+  } else {
+    rachas[symbol] = { contador: 0, ultimoFallo: null };
+    console.log(`✅ Racha ${symbol} reseteada`);
   }
   guardarRachas();
 }
 
-function estaMonedaBloqueada(symbol, limitePerdidas = 3) {
-  const datos = rachasPerdidas[symbol];
-  if (
-    !datos ||
-    (typeof datos === "number" ? datos : datos.contador) < limitePerdidas
-  )
-    return false;
-
-  // Si es el formato nuevo (objeto), calculamos el tiempo
+function estaMonedaBloqueada(symbol, limite = 3) {
+  const datos = rachas[symbol];
+  if (!datos || datos.contador < limite) return false;
   if (datos.ultimoFallo) {
     const horasPasadas = (Date.now() - datos.ultimoFallo) / (1000 * 60 * 60);
     if (horasPasadas >= HORAS_BLOQUEO) {
-      console.log(
-        `🔓 ${symbol} desbloqueado por tiempo (${HORAS_BLOQUEO}h cumplidas).`,
-      );
-      rachasPerdidas[symbol] = { contador: 0, ultimoFallo: null };
+      rachas[symbol] = { contador: 0, ultimoFallo: null };
       guardarRachas();
+      console.log(`🔓 ${symbol} desbloqueado`);
       return false;
     }
-    return true; // Sigue bloqueada por tiempo
+    return true;
   }
-
-  // Si por casualidad quedó el formato viejo (solo número), lo tratamos como bloqueado
-  return true;
+  return false;
 }
 
-// ── EXPORTACIÓN FINAL UNIFICADA ──
 module.exports = {
-  calcTakeProfit,
-  calcStopLoss,
-  calcResultado,
-  validarMinNotional,
-  superaPerdidaMaxima,
-  calcPerdidaDiaria,
-  generarResumenDiario,
-  guardarTrade,
-  cargarTrades,
-  guardarPosiciones,
-  cargarPosiciones,
-  registrarResultadoKillSwitch,
-  estaMonedaBloqueada,
+  calcTakeProfit, calcStopLoss, calcResultado,
+  validarMinNotional, superaPerdidaMaxima, calcPerdidaDiaria,
+  generarResumenDiario, guardarTrade, cargarTrades,
+  guardarPosiciones, cargarPosiciones,
+  registrarResultadoKillSwitch, estaMonedaBloqueada
 };

@@ -2,25 +2,18 @@ const axios = require('axios');
 const crypto = require('crypto');
 const config = require('../config/settings');
 
-// Configuración de URLs basada en el entorno
-const BASE_URL = config.BINANCE_TESTNET 
-  ? 'https://testnet.binance.vision' 
+const BASE_URL = config.BINANCE_TESTNET
+  ? 'https://testnet.binance.vision'
   : 'https://api.binance.com';
 
-/**
- * 🔐 Función centralizada para peticiones firmadas a Binance
- */
-async function signedRequest({ method, endpoint, params = {}, recvWindow = 10000 }) {
+async function signedRequest({ method, endpoint, params = {} }) {
   const timestamp = Date.now();
-  
-  // Construir query string con parámetros obligatorios
   const queryString = new URLSearchParams({
     ...params,
     timestamp,
-    recvWindow
+    recvWindow: 10000
   }).toString();
 
-  // Generar firma HMAC SHA256
   const signature = crypto
     .createHmac('sha256', config.BINANCE_SECRET)
     .update(queryString)
@@ -32,71 +25,43 @@ async function signedRequest({ method, endpoint, params = {}, recvWindow = 10000
     const response = await axios({
       method,
       url,
-      headers: {
-        'X-MBX-APIKEY': config.BINANCE_API_KEY,
-        'Content-Type': 'application/x-www-form-urlencoded'
-      },
+      headers: { 'X-MBX-APIKEY': config.BINANCE_API_KEY },
       timeout: 15000
     });
     return response.data;
   } catch (error) {
-    const errorData = error.response?.data ? JSON.stringify(error.response.data) : error.message;
-    throw new Error(`Binance API Error (${endpoint}): ${errorData}`);
+    const msg = error.response?.data
+      ? JSON.stringify(error.response.data)
+      : error.message;
+    throw new Error(`Binance API Error (${endpoint}): ${msg}`);
   }
 }
 
-/**
- * 📡 Obtener velas (API Pública - Datos reales para mejor precisión)
- */
-async function getCandles(symbol, interval = '1h', limit = 50) {
+// Velas completas con highs, lows y closes
+async function getCandles(symbol, interval = '1h', limit = 60) {
   try {
     const { data } = await axios.get('https://api.binance.com/api/v3/klines', {
       params: { symbol, interval, limit },
       timeout: 8000
     });
-    return data; 
+    return data;
   } catch (err) {
     throw new Error(`Error al obtener candles ${symbol}: ${err.message}`);
   }
 }
 
-/**
- * 💵 Obtener precio actual (API Pública)
- */
-async function getPrecio(symbol) {
-  try {
-    const { data } = await axios.get('https://api.binance.com/api/v3/ticker/price', {
-      params: { symbol },
-      timeout: 5000
-    });
-    return parseFloat(data.price);
-  } catch (err) {
-    throw new Error(`Error al obtener precio ${symbol}: ${err.message}`);
-  }
-}
-
-/**
- * 💰 Obtener balance de la cuenta
- */
 async function getBalance() {
   try {
-    const data = await signedRequest({
-      method: 'GET',
-      endpoint: '/api/v3/account'
-    });
+    const data = await signedRequest({ method: 'GET', endpoint: '/api/v3/account' });
     const asset = data.balances.find(b => b.asset === 'USDT');
     return parseFloat(asset?.free || 0);
   } catch (err) {
-    throw new Error(`Error al obtener balance: ${err.message}`);
+    throw new Error(`Error balance: ${err.message}`);
   }
 }
 
-/**
- * 🟢 Ejecutar orden de COMPRA (Market) usando monto en USDT
- */
 async function comprar(symbol, cantidadUSDT) {
-  console.log(`🟢 Ejecutando COMPRA en ${symbol} por ${cantidadUSDT} USDT...`);
-  
+  console.log(`🟢 Comprando ${symbol} por $${cantidadUSDT}...`);
   const order = await signedRequest({
     method: 'POST',
     endpoint: '/api/v3/order',
@@ -104,33 +69,29 @@ async function comprar(symbol, cantidadUSDT) {
       symbol,
       side: 'BUY',
       type: 'MARKET',
-      quoteOrderQty: cantidadUSDT.toString() // Compra exactamente X USDT
+      quoteOrderQty: cantidadUSDT.toString()
     }
   });
 
-  // Extraer precio real de los fills de la orden
-  const precioEjecucion = parseFloat(order.cummulativeQuoteQty) / parseFloat(order.executedQty);
-  const cantidadComprada = parseFloat(order.executedQty);
+  const fills = order.fills || [];
+  const precioEjecucion = fills.length > 0
+    ? parseFloat(order.cummulativeQuoteQty) / parseFloat(order.executedQty)
+    : 0;
 
-  console.log(`✅ COMPRA exitosa: ${cantidadComprada} ${symbol} a $${precioEjecucion}`);
+  console.log(`✅ Compra exitosa: ${order.executedQty} ${symbol} a $${precioEjecucion.toFixed(4)}`);
 
   return {
     orderId: order.orderId,
     symbol,
-    lado: 'COMPRA',
-    cantidad: cantidadComprada,
+    cantidad: parseFloat(order.executedQty),
     precio: precioEjecucion,
     usdt: parseFloat(order.cummulativeQuoteQty),
     timestamp: new Date().toISOString()
   };
 }
 
-/**
- * 🔴 Ejecutar orden de VENTA (Market)
- */
 async function vender(symbol, cantidad) {
-  console.log(`🔴 Ejecutando VENTA en ${symbol} de ${cantidad} unidades...`);
-
+  console.log(`🔴 Vendiendo ${cantidad} ${symbol}...`);
   const order = await signedRequest({
     method: 'POST',
     endpoint: '/api/v3/order',
@@ -142,24 +103,16 @@ async function vender(symbol, cantidad) {
     }
   });
 
-const precioVenta = parseFloat(order.cummulativeQuoteQty) / parseFloat(order.executedQty);
-
-  console.log(`✅ VENTA exitosa: ${symbol} a $${precioVenta}`);
+  const precioVenta = parseFloat(order.cummulativeQuoteQty) / parseFloat(order.executedQty);
+  console.log(`✅ Venta exitosa: ${symbol} a $${precioVenta.toFixed(4)}`);
 
   return {
     orderId: order.orderId,
     symbol,
-    lado: 'VENTA',
     cantidad: parseFloat(order.executedQty),
     precio: precioVenta,
     timestamp: new Date().toISOString()
   };
 }
 
-module.exports = { 
-  getCandles, 
-  getPrecio, 
-  getBalance, 
-  comprar, 
-  vender 
-};
+module.exports = { getCandles, getBalance, comprar, vender };
