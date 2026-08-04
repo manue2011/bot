@@ -287,14 +287,6 @@ async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal, macro) {
         await telegram.mensajeAlertaCritica(`Error compra ${symbol}`, err.message, capitalActual);
       }
 
-      } catch (err) {
-        // 🔴 FIX 1 (Recuperación) y FIX 3 (Alertas Silenciosas)
-        console.error(`❌ Falló la compra de ${symbol}, devolviendo capital. Error:`, err.message);
-        capitalActual += config.CAPITAL_POR_PAR;
-        capitalActual = parseFloat(capitalActual.toFixed(4));
-        // Añadimos el aviso por Telegram si falla la compra
-        await telegram.mensajeAlertaCritica(`Error en compra ${symbol}`, err.message, capitalActual);
-      } // <-- ESTA ES LA LLAVE QUE FALTABA (Cierra el catch)
     } else {
       console.log(`   ⏳ ${razon}`);
     }
