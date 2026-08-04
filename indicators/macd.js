@@ -24,6 +24,8 @@ function calcMACD(closes) {
     if (e12 && e26) macdHistory.push(e12 - e26);
   }
 
+  if (macdHistory.length < 9) return null;
+
   const signalLine = calcEMA(macdHistory, 9);
   const histogram = signalLine
     ? parseFloat((macdLine - signalLine).toFixed(4))

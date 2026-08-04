@@ -3,6 +3,13 @@ const config = require('../config/settings');
 
 let cacheNoticias = {};
 let ultimaActualizacion = 0;
+let actualizando = false;
+
+const NOMBRES_LARGOS = {
+  AVAX: 'avalanche', SOL: 'solana', NEAR: 'near protocol',
+  LINK: 'chainlink', DOT: 'polkadot', MATIC: 'polygon',
+  ADA: 'cardano', ETH: 'ethereum', BNB: 'binance'
+};
 
 const NOMBRES = {
   BTC: ['bitcoin', 'btc'],
@@ -44,7 +51,7 @@ async function actualizarNoticias() {
       cacheNoticias[symbol] = {
         sentimiento: score > 1 ? 'POSITIVO' : score < -2 ? 'NEGATIVO' : 'NEUTRO',
         score,
-        titular: noticias[0]?.headline || 'Sin noticias'
+        titular: noticiasMoneda[0]?.headline || 'Sin noticias recientes'
       };
     });
 

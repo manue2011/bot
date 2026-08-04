@@ -1,6 +1,22 @@
-const config = require('../config/settings');
-const fs = require('fs');
-const path = require('path');
+const config = require("../config/settings");
+const fs = require("fs");
+const path = require("path");
+
+// --- RUTAS DE ARCHIVOS (Persistencia en Fly.io) ---
+const TRADES_PATH = path.join(process.cwd(), "logs/trades.json");
+const SUMMARY_PATH = path.join(process.cwd(), "logs/daily_summary.json");
+const POSICIONES_PATH = path.join(process.cwd(), "logs/posiciones.json");
+const KILL_SWITCH_FILE = path.join(
+  process.cwd(),
+  "logs/kill_switch_status.json",
+);
+
+// ── PERSISTENCIA DE POSICIONES ──
+function guardarPosiciones(posiciones) {
+  const logsDir = path.join(process.cwd(), "logs");
+  if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir, { recursive: true });
+  fs.writeFileSync(POSICIONES_PATH, JSON.stringify(posiciones, null, 2));
+}
 
 const TRADES_PATH = path.join(process.cwd(), 'logs/trades.json');
 const SUMMARY_PATH = path.join(process.cwd(), 'logs/daily_summary.json');
@@ -61,7 +77,9 @@ function calcResultado(precioEntrada, precioSalida, cantidad) {
   const feeCompra = precioEntrada * cantidad * (config.FEE_PCT / 100);
   const feeVenta = precioSalida * cantidad * (config.FEE_PCT / 100);
   const neto = parseFloat((bruto - feeCompra - feeVenta).toFixed(4));
-  const pct = parseFloat(((neto / (precioEntrada * cantidad)) * 100).toFixed(2));
+  const pct = parseFloat(
+    ((neto / (precioEntrada * cantidad)) * 100).toFixed(2),
+  );
   return { neto, pct };
 }
 
@@ -81,11 +99,12 @@ function calcPerdidaDiaria() {
 
 function superaPerdidaMaxima() {
   const perdidaHoy = calcPerdidaDiaria();
-  const maxPermitida = config.CAPITAL_TOTAL * (config.MAX_PERDIDA_DIARIA_PCT / 100);
+  const maxPermitida =
+    config.CAPITAL_TOTAL * (config.MAX_PERDIDA_DIARIA_PCT / 100);
   return {
     supera: perdidaHoy >= maxPermitida,
     perdidaHoy: parseFloat(perdidaHoy.toFixed(4)),
-    maxPermitida: parseFloat(maxPermitida.toFixed(4))
+    maxPermitida: parseFloat(maxPermitida.toFixed(4)),
   };
 }
 

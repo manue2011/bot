@@ -46,7 +46,7 @@ async function getCandles(symbol, interval = '1h', limit = 60) {
     });
     return data;
   } catch (err) {
-    throw new Error(`Error candles ${symbol}: ${err.message}`);
+    throw new Error(`Error al obtener candles ${symbol}: ${err.message}`);
   }
 }
 
