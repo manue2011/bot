@@ -1,29 +1,12 @@
-const config = require("../config/settings");
-const fs = require("fs");
-const path = require("path");
-
-// --- RUTAS DE ARCHIVOS (Persistencia en Fly.io) ---
-const TRADES_PATH = path.join(process.cwd(), "logs/trades.json");
-const SUMMARY_PATH = path.join(process.cwd(), "logs/daily_summary.json");
-const POSICIONES_PATH = path.join(process.cwd(), "logs/posiciones.json");
-const KILL_SWITCH_FILE = path.join(
-  process.cwd(),
-  "logs/kill_switch_status.json",
-);
-
-// ── PERSISTENCIA DE POSICIONES ──
-function guardarPosiciones(posiciones) {
-  const logsDir = path.join(process.cwd(), "logs");
-  if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir, { recursive: true });
-  fs.writeFileSync(POSICIONES_PATH, JSON.stringify(posiciones, null, 2));
-}
+const config = require('../config/settings');
+const fs = require('fs');
+const path = require('path');
 
 const TRADES_PATH = path.join(process.cwd(), 'logs/trades.json');
 const SUMMARY_PATH = path.join(process.cwd(), 'logs/daily_summary.json');
 const POSICIONES_PATH = path.join(process.cwd(), 'logs/posiciones.json');
 const KILL_SWITCH_PATH = path.join(process.cwd(), 'logs/kill_switch.json');
 
-// ── PERSISTENCIA ──
 function guardarPosiciones(data) {
   const logsDir = path.join(process.cwd(), 'logs');
   if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir, { recursive: true });
@@ -40,7 +23,6 @@ function cargarPosiciones() {
   return {};
 }
 
-// ── TRADES ──
 function cargarTrades() {
   try {
     return JSON.parse(fs.readFileSync(TRADES_PATH, 'utf8')) || [];
@@ -55,7 +37,6 @@ function guardarTrade(trade) {
   fs.writeFileSync(TRADES_PATH, JSON.stringify(trades, null, 2));
 }
 
-// ── CÁLCULOS ──
 function calcTakeProfit(precioEntrada) {
   const feeTotal = config.FEE_PCT * 2;
   const pctNeto = config.TAKE_PROFIT_PCT - feeTotal;
@@ -68,7 +49,6 @@ function calcStopLoss(precioEntrada, atr) {
     : precioEntrada * (config.STOP_LOSS_PCT / 100);
   const stopATR = precioEntrada - distancia;
   const stopMaximo = precioEntrada * (1 - config.STOP_LOSS_PCT / 100);
-  // Elegimos el más cercano para limitar pérdida máxima al 2%
   return parseFloat(Math.max(stopATR, stopMaximo).toFixed(2));
 }
 
@@ -77,9 +57,7 @@ function calcResultado(precioEntrada, precioSalida, cantidad) {
   const feeCompra = precioEntrada * cantidad * (config.FEE_PCT / 100);
   const feeVenta = precioSalida * cantidad * (config.FEE_PCT / 100);
   const neto = parseFloat((bruto - feeCompra - feeVenta).toFixed(4));
-  const pct = parseFloat(
-    ((neto / (precioEntrada * cantidad)) * 100).toFixed(2),
-  );
+  const pct = parseFloat(((neto / (precioEntrada * cantidad)) * 100).toFixed(2));
   return { neto, pct };
 }
 
@@ -87,7 +65,6 @@ function validarMinNotional(cantidadUSDT) {
   return cantidadUSDT >= config.MIN_ORDER_USDT;
 }
 
-// ── PÉRDIDA DIARIA ──
 function calcPerdidaDiaria() {
   const trades = cargarTrades();
   const hoy = new Date().toDateString();
@@ -99,16 +76,14 @@ function calcPerdidaDiaria() {
 
 function superaPerdidaMaxima() {
   const perdidaHoy = calcPerdidaDiaria();
-  const maxPermitida =
-    config.CAPITAL_TOTAL * (config.MAX_PERDIDA_DIARIA_PCT / 100);
+  const maxPermitida = config.CAPITAL_TOTAL * (config.MAX_PERDIDA_DIARIA_PCT / 100);
   return {
     supera: perdidaHoy >= maxPermitida,
     perdidaHoy: parseFloat(perdidaHoy.toFixed(4)),
-    maxPermitida: parseFloat(maxPermitida.toFixed(4)),
+    maxPermitida: parseFloat(maxPermitida.toFixed(4))
   };
 }
 
-// ── RESUMEN DIARIO ──
 function generarResumenDiario(capitalActual) {
   const trades = cargarTrades();
   const hoy = new Date().toDateString();
@@ -120,7 +95,11 @@ function generarResumenDiario(capitalActual) {
   const gananciaDia = parseFloat(tradesHoy.reduce((acc, t) => acc + t.resultado, 0).toFixed(4));
   const pctAciertos = total > 0 ? parseFloat(((ganadoras / total) * 100).toFixed(1)) : 0;
 
-  const resumen = { fecha: new Date().toLocaleDateString('es-ES'), ganadoras, perdedoras: total - ganadoras, total, gananciaDia, capitalActual, pctAciertos };
+  const resumen = {
+    fecha: new Date().toLocaleDateString('es-ES'),
+    ganadoras, perdedoras: total - ganadoras,
+    total, gananciaDia, capitalActual, pctAciertos
+  };
 
   let summaries = [];
   try {
@@ -132,7 +111,6 @@ function generarResumenDiario(capitalActual) {
   return resumen;
 }
 
-// ── KILL SWITCH ──
 let rachas = cargarRachas();
 const HORAS_BLOQUEO = 4;
 
