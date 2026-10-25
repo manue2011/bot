@@ -100,7 +100,7 @@ function nuevoStopTrailing(pos, precio, p = config.ESTRATEGIA) {
 }
 
 function motivoSalida(pos, precio, sentimiento) {
-  if (precio >= pos.takeProfit) return '🎯 Take-Profit';
+  if (pos.takeProfit && precio >= pos.takeProfit) return '🎯 Take-Profit';
   if (precio <= pos.stopLoss) return pos.stopLoss > pos.precioEntrada ? '📈 Trailing' : '🛡️ Stop-Loss';
   if (sentimiento === 'NEGATIVO') return '📰 Noticias';
   return null;

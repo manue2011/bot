@@ -18,12 +18,16 @@ async function enviar(mensaje) {
 }
 
 function mensajeInicio() {
-  return enviar(`🤖 <b>Crypto Bot v5.0 iniciado</b>
+  const t = config.TENDENCIA, e = config.ESTRATEGIA;
+  const reglas = config.MODO === 'TENDENCIA'
+    ? `📈 Estrategia: <b>Tendencia 4h</b> — ruptura ${t.N} velas, stop ${t.STOP_ATR}×ATR → mínimo ${t.M} velas, filtro SMA${t.SMA_DIAS}d (${t.FILTRO})`
+    : `🛡️ SL: <b>${e.SL_ATR_MULT}×ATR</b> (${e.SL_MIN_PCT}–${e.SL_MAX_PCT}%) | 🎯 TP: <b>${e.TP_PCT ? '+' + e.TP_PCT + '%' : e.TP_R + 'R'}</b>`;
+  return enviar(`🤖 <b>Crypto Bot v6.0 iniciado</b>
 ━━━━━━━━━━━━━━━━━━━━
-💰 Capital: <b>$${config.CAPITAL_TOTAL} USDT</b>
+💰 Capital: <b>$${config.CAPITAL_TOTAL} USDT</b> | $${config.CAPITAL_POR_PAR} por operación | máx ${config.MAX_OPEN_TRADES}
 📊 Pares: <b>${config.SYMBOLS.map(s => s.replace('USDT', '')).join(' | ')}</b>
 🔒 Modo: <b>${config.BINANCE_TESTNET ? 'TESTNET' : '🔴 REAL'}</b>
-🛡️ SL: <b>${config.ESTRATEGIA.SL_ATR_MULT}×ATR</b> (${config.ESTRATEGIA.SL_MIN_PCT}–${config.ESTRATEGIA.SL_MAX_PCT}%) | 🎯 TP: <b>${config.ESTRATEGIA.TP_PCT ? '+' + config.ESTRATEGIA.TP_PCT + '%' : config.ESTRATEGIA.TP_R + 'R'}</b>
+${reglas}
 ⏰ Intervalo: <b>${config.INTERVALO_SEGUNDOS}s</b>
 ━━━━━━━━━━━━━━━━━━━━
 ¡Bot en marcha! 🚀`);
@@ -37,11 +41,9 @@ function mensajeCompra(datos) {
 📦 Cantidad: <b>${datos.cantidad}</b>
 💰 Invertido: <b>$${datos.usdt} USDT</b>
 ━━━━━━━━━━━━━━━━━━━━
-🛡️ Stop-Loss: <b>$${datos.stopLoss}</b>
-🎯 Take-Profit: <b>$${datos.takeProfit}</b>
-━━━━━━━━━━━━━━━━━━━━
-📊 RSI: ${datos.rsi} | MACD: ${datos.macd ? '↑' : '↓'} | Tendencia 4H: ${datos.tendencia4h}
-😱 Fear&Greed: ${datos.fgValor}
+🛡️ Stop-Loss: <b>$${datos.stopLoss}</b> (${(((datos.stopLoss / datos.precioEntrada) - 1) * 100).toFixed(1)}%)
+${datos.takeProfit ? `🎯 Take-Profit: <b>$${datos.takeProfit}</b>\n` : ''}━━━━━━━━━━━━━━━━━━━━
+${datos.detalle || ''}
 ⏰ ${new Date().toLocaleString('es-ES')}`);
 }
 

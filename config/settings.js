@@ -19,7 +19,20 @@ module.exports = {
   MAX_PERDIDA_DIARIA_PCT: parseFloat(process.env.MAX_PERDIDA_DIARIA_PCT || 6),
   FEE_PCT: parseFloat(process.env.FEE_PCT || 0.1),
 
-  // Parámetros de la estrategia (strategy/estrategia.js). Compáralos con: node backtest.js
+  // Qué estrategia opera el bot: 'TENDENCIA' (strategy/tendencia.js) o 'SWING' (strategy/estrategia.js)
+  MODO: process.env.MODO_ESTRATEGIA || 'TENDENCIA',
+
+  // Seguimiento de tendencia en 4h. Backtest 3 años, 20 monedas (node backtest_tendencia.js):
+  // rentable los 3 años, también sin las 3 mejores monedas y con 5, 10 o 20 huecos.
+  TENDENCIA: {
+    N: 55,          // ruptura del máximo de las últimas 55 velas de 4h (~9 días)
+    M: 20,          // stop sube al mínimo de las últimas 20 velas de 4h (~3.3 días)
+    STOP_ATR: 3,    // stop inicial a 3 × ATR(14) de 4h
+    SMA_DIAS: 100,  // filtro de régimen: precio > media de 100 días
+    FILTRO: 'ambos' // 'ambos' (moneda y BTC), 'btc', 'moneda' o 'ninguno'
+  },
+
+  // Parámetros de la estrategia SWING (strategy/estrategia.js). Compáralos con: node backtest.js
   ESTRATEGIA: {
     MOMENTUM: true,
     MEAN_REVERSION: true,
