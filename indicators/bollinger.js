@@ -8,9 +8,9 @@ function calcBollinger(closes, period = 20, multiplier = 2) {
   const avgSquared = squaredDiffs.reduce((a, b) => a + b, 0) / period;
   const stdDev = Math.sqrt(avgSquared);
 
-  const upper = parseFloat((sma + multiplier * stdDev).toFixed(4));
-  const lower = parseFloat((sma - multiplier * stdDev).toFixed(4));
-  const middle = parseFloat(sma.toFixed(4));
+  const upper = sma + multiplier * stdDev;
+  const lower = sma - multiplier * stdDev;
+  const middle = sma;
 
   const precio = closes[closes.length - 1];
 

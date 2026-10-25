@@ -85,8 +85,8 @@ async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal, macro) {
     }
     const { rsi, sma20, macd, atr, puntuacion, estrategia } = señal;
 
-    console.log(`\n📊 ${symbol} | $${precio.toFixed(2)}`);
-    console.log(`   RSI: ${rsi} | SMA20: $${sma20} | MACD: ${macd.alcista ? '↑' : '↓'} | ATR: ${atr}`);
+    console.log(`\n📊 ${symbol} | $${precio.toPrecision(6)}`);
+    console.log(`   RSI: ${rsi} | SMA20: $${sma20.toPrecision(6)} | MACD: ${macd.alcista ? '↑' : '↓'} | ATR: ${atr.toPrecision(4)}`);
     console.log(`   F&G: ${fgValor} | Noticias: ${sentimiento} | Macro: ${macro} | 4H: ${tendencia4h} | Nota: ${puntuacion}/12`);
 
     // ── LÓGICA DE VENTA ──
@@ -97,7 +97,7 @@ async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal, macro) {
       // TRAILING STOP / BREAKEVEN
       const nuevoStop = nuevoStopTrailing(pos, precio);
       if (nuevoStop) {
-        pos.stopLoss = parseFloat(nuevoStop.toFixed(2));
+        pos.stopLoss = parseFloat(nuevoStop.toPrecision(8));
         guardarPosiciones({ posiciones: posicionesAbiertas, ultimoVentaTime });
         console.log(`📈 [TRAILING] ${symbol} → suelo $${pos.stopLoss} (+${gananciaActualPct.toFixed(2)}%)`);
       }
@@ -113,6 +113,14 @@ async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal, macro) {
             break;
           } catch (err) {
             console.error(`⚠️ Intento ${intento}/3 fallido ${symbol}: ${err.message}`);
+            if (err.sinSaldo) {
+              // La moneda ya no está en la cuenta (p. ej. reinicio del testnet): no hay nada que vender
+              delete posicionesAbiertas[symbol];
+              capitalActual = parseFloat((capitalActual + (pos.usdt || 0)).toFixed(4));
+              guardarPosiciones({ posiciones: posicionesAbiertas, ultimoVentaTime });
+              await telegram.mensajeAlertaCritica(`Posición ${symbol} eliminada: sin saldo en la cuenta`, 0, capitalActual);
+              return;
+            }
             if (intento === 3) throw err;
             await new Promise(r => setTimeout(r, 3000));
           }
@@ -208,8 +216,9 @@ async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal, macro) {
       try {
         const orden = await comprar(symbol, config.CAPITAL_POR_PAR);
         const niveles = nivelesSalida(orden.precio, atr);
-        const stopLoss = parseFloat(niveles.stopLoss.toFixed(2));
-        const takeProfit = parseFloat(niveles.takeProfit.toFixed(2));
+        // 8 cifras significativas: vale igual para BTC (80000) que para DOGE (0.2) o PEPE (0.00001)
+        const stopLoss = parseFloat(niveles.stopLoss.toPrecision(8));
+        const takeProfit = parseFloat(niveles.takeProfit.toPrecision(8));
 
         posicionesAbiertas[symbol] = {
           precioEntrada: orden.precio,
@@ -270,8 +279,10 @@ async function tick() {
   const { señal: fgSeñal } = evaluarFearGreed(fgValor);
   const macro = await obtenerMacro();
 
+  // También las posiciones abiertas de monedas que ya no están en SYMBOLS, para poder cerrarlas
+  const simbolos = [...new Set([...config.SYMBOLS, ...Object.keys(posicionesAbiertas)])];
   await Promise.all(
-    config.SYMBOLS.map(symbol =>
+    simbolos.map(symbol =>
       procesarPar(symbol, fgValor, fgClasificacion, fgSeñal, macro)
     )
   );

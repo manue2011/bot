@@ -21,7 +21,7 @@ function mensajeInicio() {
   return enviar(`🤖 <b>Crypto Bot v5.0 iniciado</b>
 ━━━━━━━━━━━━━━━━━━━━
 💰 Capital: <b>$${config.CAPITAL_TOTAL} USDT</b>
-📊 Pares: <b>BTC | ETH</b>
+📊 Pares: <b>${config.SYMBOLS.map(s => s.replace('USDT', '')).join(' | ')}</b>
 🔒 Modo: <b>${config.BINANCE_TESTNET ? 'TESTNET' : '🔴 REAL'}</b>
 🛡️ SL: <b>${config.ESTRATEGIA.SL_ATR_MULT}×ATR</b> (${config.ESTRATEGIA.SL_MIN_PCT}–${config.ESTRATEGIA.SL_MAX_PCT}%) | 🎯 TP: <b>${config.ESTRATEGIA.TP_PCT ? '+' + config.ESTRATEGIA.TP_PCT + '%' : config.ESTRATEGIA.TP_R + 'R'}</b>
 ⏰ Intervalo: <b>${config.INTERVALO_SEGUNDOS}s</b>
@@ -33,7 +33,7 @@ function mensajeCompra(datos) {
   return enviar(`🟢 <b>COMPRA EJECUTADA</b>
 ━━━━━━━━━━━━━━━━━━━━
 📌 Par: <b>${datos.symbol}</b>
-💵 Precio: <b>$${datos.precioEntrada.toFixed(2)}</b>
+💵 Precio: <b>$${datos.precioEntrada.toPrecision(6)}</b>
 📦 Cantidad: <b>${datos.cantidad}</b>
 💰 Invertido: <b>$${datos.usdt} USDT</b>
 ━━━━━━━━━━━━━━━━━━━━

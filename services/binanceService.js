@@ -146,7 +146,9 @@ async function vender(symbol, cantidad) {
   const stepSize = await getStepSize(symbol);
   const cantidadVenta = ajustarAStep(Math.min(cantidad, libre), stepSize);
   if (!(parseFloat(cantidadVenta) > 0)) {
-    throw new Error(`Sin saldo para vender ${symbol} (pedido ${cantidad}, libre ${libre})`);
+    const err = new Error(`Sin saldo para vender ${symbol} (pedido ${cantidad}, libre ${libre})`);
+    err.sinSaldo = true;
+    throw err;
   }
 
   console.log(`🔴 Vendiendo ${cantidadVenta} ${symbol}...`);

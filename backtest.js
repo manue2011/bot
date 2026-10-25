@@ -8,6 +8,8 @@ const config = require('./config/settings');
 const { tendencia4HDesde, macroDesde, evaluarEntrada, nivelesSalida, nuevoStopTrailing, motivoSalida } = require('./strategy/estrategia');
 
 const DIAS = parseInt(process.argv[2] || 365);
+// SIMBOLOS=BTCUSDT,ETHUSDT,... para probar otras monedas (por defecto las del bot)
+const SIMBOLOS = process.env.SIMBOLOS ? process.env.SIMBOLOS.split(',') : config.SYMBOLS;
 const DATA_DIR = path.join(__dirname, 'backtest_data');
 const FEE = config.FEE_PCT / 100;
 const SLIPPAGE = 0.0005; // 0.05% por orden de mercado
@@ -20,9 +22,19 @@ async function descargar(symbol, interval, desde, hasta) {
   const velas = [];
   let start = desde;
   while (start < hasta) {
-    const { data } = await axios.get('https://api.binance.com/api/v3/klines', {
-      params: { symbol, interval, startTime: start, endTime: hasta, limit: 1000 }, timeout: 15000
-    });
+    let data;
+    for (let intento = 1; ; intento++) {
+      try {
+        ({ data } = await axios.get('https://api.binance.com/api/v3/klines', {
+          params: { symbol, interval, startTime: start, endTime: hasta, limit: 1000 }, timeout: 30000
+        }));
+        break;
+      } catch (err) {
+        if (intento >= 5) throw err;
+        console.log(`   reintento ${intento} ${symbol} ${interval}: ${err.message}`);
+        await new Promise(r => setTimeout(r, 3000 * intento));
+      }
+    }
     if (!data.length) break;
     velas.push(...data.map(c => [c[0], +c[1], +c[2], +c[3], +c[4], +c[5], c[6]]));
     start = data[data.length - 1][0] + MS[interval];
@@ -136,7 +148,8 @@ const VARIANTES = {
 
   console.log(`⏬ Descargando ${DIAS} días de velas...`);
   const datos = {};
-  for (const s of config.SYMBOLS) {
+  for (const s of [...new Set(['BTCUSDT', ...SIMBOLOS])]) {
+    console.log(`   ⬇ ${s}`);
     datos[s] = {};
     for (const iv of ['5m', '1h', '4h', '1d']) datos[s][iv] = await descargar(s, iv, desde - calentamiento, hasta);
   }
@@ -146,14 +159,23 @@ const VARIANTES = {
   const filas = [];
   for (const [nombre, p] of Object.entries(VARIANTES)) {
     if (!p) continue;
-    const trades = config.SYMBOLS.flatMap(s => simular(s, datos[s], btc5m, datos.BTCUSDT['1d'], p, desde));
+    const trades = SIMBOLOS.flatMap(s => simular(s, datos[s], btc5m, datos.BTCUSDT['1d'], p, desde));
     const fila = { variante: nombre };
     const tr = metricas(trades.filter(x => x.t < corte)), va = metricas(trades.filter(x => x.t >= corte));
     Object.assign(fila, { 'n(entr)': tr.n, 'acierto(entr)': tr.aciertos, 'total%(entr)': tr.total, 'pf(entr)': tr.pf,
       'n(valid)': va.n, 'acierto(valid)': va.aciertos, 'gan/perd media(valid)': `${va.ganMedia}/${va.perdMedia}`,
       'total%(valid)': va.total, 'pf(valid)': va.pf, 'maxDD%(valid)': va.maxDD });
-    for (const s of config.SYMBOLS) fila[`total%${s.replace('USDT', '')}`] = metricas(trades.filter(x => x.symbol === s)).total;
+    if (SIMBOLOS.length <= 4) for (const s of SIMBOLOS) fila[`total%${s.replace('USDT', '')}`] = metricas(trades.filter(x => x.symbol === s)).total;
     filas.push(fila);
+    if (process.env.POR_MONEDA) {
+      console.log(`\n── ${nombre}: por moneda ──`);
+      console.table(SIMBOLOS.map(s => {
+        const tr = metricas(trades.filter(x => x.symbol === s && x.t < corte));
+        const va = metricas(trades.filter(x => x.symbol === s && x.t >= corte));
+        return { moneda: s, 'n(entr)': tr.n, 'total%(entr)': tr.total, 'pf(entr)': tr.pf, 'n(valid)': va.n, 'total%(valid)': va.total, 'pf(valid)': va.pf };
+      }));
+    }
+    if (process.env.EXPORTAR) fs.writeFileSync(path.join(DATA_DIR, `trades_${nombre}.json`), JSON.stringify(trades));
     if (process.env.DETALLE === nombre) {
       const porMotivo = {};
       trades.forEach(x => { const k = `${x.estrategia} ${x.motivo}`; (porMotivo[k] = porMotivo[k] || []).push(x); });

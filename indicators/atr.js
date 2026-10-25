@@ -10,7 +10,7 @@ function calcATR(highs, lows, closes, period = 14) {
     trs.push(tr);
   }
   const lastTRs = trs.slice(-period);
-  return parseFloat((lastTRs.reduce((a, b) => a + b, 0) / period).toFixed(4));
+  return lastTRs.reduce((a, b) => a + b, 0) / period;
 }
 
 module.exports = { calcATR };

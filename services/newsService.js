@@ -7,7 +7,25 @@ let actualizando = null; // promesa compartida para no pedir dos veces a la vez
 
 const NOMBRES = {
   BTC: ['bitcoin', 'btc'],
-  ETH: ['ethereum', 'eth', 'ether']
+  ETH: ['ethereum', 'eth', 'ether'],
+  SOL: ['solana', 'sol'],
+  XRP: ['xrp', 'ripple'],
+  BNB: ['bnb', 'bnb chain'],
+  DOGE: ['dogecoin', 'doge'],
+  ADA: ['cardano', 'ada'],
+  TRX: ['tron', 'trx'],
+  LINK: ['chainlink'],
+  AVAX: ['avalanche', 'avax'],
+  DOT: ['polkadot'],
+  LTC: ['litecoin', 'ltc'],
+  NEAR: ['near protocol'],
+  SUI: ['sui'],
+  UNI: ['uniswap'],
+  AAVE: ['aave'],
+  ZEC: ['zcash', 'zec'],
+  PEPE: ['pepe'],
+  WLD: ['worldcoin', 'wld'],
+  ENA: ['ethena', 'ena']
 };
 
 const palabrasPositivas = ['surge', 'surges', 'rally', 'rallies', 'breakout', 'bullish', 'adoption', 'partnership', 'upgrade', 'record high', 'soars', 'jumps'];

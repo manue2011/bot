@@ -4,14 +4,14 @@ module.exports = {
   BINANCE_API_KEY: process.env.BINANCE_API_KEY,
   BINANCE_SECRET: process.env.BINANCE_SECRET,
 
-  // Pares — Solo BTC y ETH, más estables
-  SYMBOLS: ['BTCUSDT', 'ETHUSDT'],
+  // Pares — configurable con SYMBOLS=BTCUSDT,ETHUSDT,... (en Fly: fly secrets set SYMBOLS=...)
+  SYMBOLS: (process.env.SYMBOLS || 'BTCUSDT,ETHUSDT').split(',').map(s => s.trim()).filter(Boolean),
 
   // Capital
   CAPITAL_TOTAL: parseFloat(process.env.CAPITAL_TOTAL || 50),
   CAPITAL_POR_PAR: parseFloat(process.env.CAPITAL_POR_PAR || 20),
   MIN_ORDER_USDT: parseFloat(process.env.MIN_ORDER_USDT || 5), // mínimo real de Binance: 5 USDT
-  MAX_OPEN_TRADES: 2,
+  MAX_OPEN_TRADES: parseInt(process.env.MAX_OPEN_TRADES || 2),
 
   // Risk — Ratio 2:1 (ganamos el doble de lo que perdemos)
   TAKE_PROFIT_PCT: parseFloat(process.env.TAKE_PROFIT_PCT || 4),
@@ -48,7 +48,7 @@ module.exports = {
   TELEGRAM_CHAT_ID: parseInt(process.env.TELEGRAM_CHAT_ID),
 
   // Registro de operaciones en Google Sheets (Apps Script)
-  GOOGLE_SHEET_URL: process.env.GOOGLE_SHEET_URL || 'https://script.google.com/macros/s/AKfycbx-Enj-nl9WOzTmV60jjllg7BZqFo7RgpFwSy5ofyhKM04TTzgV2IhgWv5Rwi4qFMI/exec',
+  GOOGLE_SHEET_URL: process.env.GOOGLE_SHEET_URL || process.env.EXCEL_WEBHOOK_URL || 'https://script.google.com/macros/s/AKfycbx-Enj-nl9WOzTmV60jjllg7BZqFo7RgpFwSy5ofyhKM04TTzgV2IhgWv5Rwi4qFMI/exec',
 
   // Timing
   INTERVALO_SEGUNDOS: parseInt(process.env.INTERVALO_SEGUNDOS || 60),

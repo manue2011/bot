@@ -5,7 +5,7 @@ function calcEMA(closes, period) {
   for (let i = period; i < closes.length; i++) {
     ema = closes[i] * k + ema * (1 - k);
   }
-  return parseFloat(ema.toFixed(4));
+  return ema;
 }
 
 function calcMACD(closes) {
@@ -14,7 +14,7 @@ function calcMACD(closes) {
   const ema26 = calcEMA(closes, 26);
   if (!ema12 || !ema26) return null;
 
-  const macdLine = parseFloat((ema12 - ema26).toFixed(4));
+  const macdLine = ema12 - ema26;
 
   const macdHistory = [];
   for (let i = closes.length - 9; i < closes.length; i++) { // < no <=
@@ -28,7 +28,7 @@ function calcMACD(closes) {
 
   const signalLine = calcEMA(macdHistory, 9);
   const histogram = signalLine
-    ? parseFloat((macdLine - signalLine).toFixed(4))
+    ? macdLine - signalLine
     : null;
 
   return {
