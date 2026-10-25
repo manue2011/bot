@@ -2,5 +2,7 @@
 **/node_modules
 **/.env
 **/logs
-**/trades.jsontrades.json
+**/trades.json
+**/.DS_Store
 fly.toml
+backtest_data
