@@ -23,7 +23,7 @@ function mensajeInicio() {
 💰 Capital: <b>$${config.CAPITAL_TOTAL} USDT</b>
 📊 Pares: <b>BTC | ETH</b>
 🔒 Modo: <b>${config.BINANCE_TESTNET ? 'TESTNET' : '🔴 REAL'}</b>
-🎯 TP: <b>+${config.TAKE_PROFIT_PCT}%</b> | 🛡️ SL: <b>-${config.STOP_LOSS_PCT}%</b>
+🛡️ SL: <b>${config.ESTRATEGIA.SL_ATR_MULT}×ATR</b> (${config.ESTRATEGIA.SL_MIN_PCT}–${config.ESTRATEGIA.SL_MAX_PCT}%) | 🎯 TP: <b>${config.ESTRATEGIA.TP_PCT ? '+' + config.ESTRATEGIA.TP_PCT + '%' : config.ESTRATEGIA.TP_R + 'R'}</b>
 ⏰ Intervalo: <b>${config.INTERVALO_SEGUNDOS}s</b>
 ━━━━━━━━━━━━━━━━━━━━
 ¡Bot en marcha! 🚀`);

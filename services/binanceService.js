@@ -37,24 +37,67 @@ async function signedRequest({ method, endpoint, params = {} }) {
   }
 }
 
-// Velas completas con highs, lows y closes
+// Velas CERRADAS del mercado real (señales). Se descarta la vela en curso:
+// su cierre y volumen están a medias y falsean RSI, MACD y el filtro de volumen.
 async function getCandles(symbol, interval = '1h', limit = 60) {
   try {
     const { data } = await axios.get('https://api.binance.com/api/v3/klines', {
-      params: { symbol, interval, limit },
+      params: { symbol, interval, limit: limit + 1 },
       timeout: 8000
     });
-    return data;
+    const ahora = Date.now();
+    return data.filter(c => c[6] < ahora).slice(-limit);
   } catch (err) {
     throw new Error(`Error al obtener candles ${symbol}: ${err.message}`);
   }
 }
 
+// Precio actual en el MISMO exchange donde se ejecutan las órdenes
+// (testnet en pruebas, real en producción), para comparar con TP/SL.
+async function getPrecio(symbol) {
+  try {
+    const { data } = await axios.get(`${BASE_URL}/api/v3/ticker/price`, {
+      params: { symbol },
+      timeout: 8000
+    });
+    return parseFloat(data.price);
+  } catch (err) {
+    throw new Error(`Error al obtener precio ${symbol}: ${err.message}`);
+  }
+}
+
+// stepSize del par (LOT_SIZE), cacheado
+const cacheStep = {};
+async function getStepSize(symbol) {
+  if (cacheStep[symbol]) return cacheStep[symbol];
+  const { data } = await axios.get(`${BASE_URL}/api/v3/exchangeInfo`, {
+    params: { symbol },
+    timeout: 8000
+  });
+  const lot = data.symbols[0].filters.find(f => f.filterType === 'LOT_SIZE');
+  cacheStep[symbol] = lot.stepSize;
+  return lot.stepSize;
+}
+
+// Redondea hacia abajo al stepSize y devuelve string sin errores de coma flotante
+function ajustarAStep(cantidad, stepSize) {
+  const decimales = stepSize.includes('.')
+    ? stepSize.replace(/0+$/, '').split('.')[1].length
+    : 0;
+  const factor = Math.pow(10, decimales);
+  const pasos = Math.floor((cantidad * factor) / (parseFloat(stepSize) * factor) + 1e-9);
+  return (pasos * parseFloat(stepSize)).toFixed(decimales);
+}
+
+async function getBalanceAsset(asset) {
+  const data = await signedRequest({ method: 'GET', endpoint: '/api/v3/account' });
+  const fila = data.balances.find(b => b.asset === asset);
+  return parseFloat(fila?.free || 0);
+}
+
 async function getBalance() {
   try {
-    const data = await signedRequest({ method: 'GET', endpoint: '/api/v3/account' });
-    const asset = data.balances.find(b => b.asset === 'USDT');
-    return parseFloat(asset?.free || 0);
+    return await getBalanceAsset('USDT');
   } catch (err) {
     throw new Error(`Error balance: ${err.message}`);
   }
@@ -73,17 +116,23 @@ async function comprar(symbol, cantidadUSDT) {
     }
   });
 
-  const fills = order.fills || [];
-  const precioEjecucion = fills.length > 0
-    ? parseFloat(order.cummulativeQuoteQty) / parseFloat(order.executedQty)
-    : 0;
+  const executedQty = parseFloat(order.executedQty);
+  if (!(executedQty > 0)) throw new Error(`Compra ${symbol} sin ejecutar (status ${order.status})`);
+  const precioEjecucion = parseFloat(order.cummulativeQuoteQty) / executedQty;
 
-  console.log(`✅ Compra exitosa: ${order.executedQty} ${symbol} a $${precioEjecucion.toFixed(4)}`);
+  // Si la comisión se cobra en la moneda comprada, lo que realmente tenemos es menos
+  const base = symbol.replace('USDT', '');
+  const comisionBase = (order.fills || [])
+    .filter(f => f.commissionAsset === base)
+    .reduce((acc, f) => acc + parseFloat(f.commission), 0);
+  const cantidadNeta = executedQty - comisionBase;
+
+  console.log(`✅ Compra exitosa: ${cantidadNeta} ${symbol} a $${precioEjecucion.toFixed(4)}`);
 
   return {
     orderId: order.orderId,
     symbol,
-    cantidad: parseFloat(order.executedQty),
+    cantidad: cantidadNeta,
     precio: precioEjecucion,
     usdt: parseFloat(order.cummulativeQuoteQty),
     timestamp: new Date().toISOString()
@@ -91,7 +140,16 @@ async function comprar(symbol, cantidadUSDT) {
 }
 
 async function vender(symbol, cantidad) {
-  console.log(`🔴 Vendiendo ${cantidad} ${symbol}...`);
+  // Nunca vender más de lo que hay libre, y respetar el stepSize del par
+  const base = symbol.replace('USDT', '');
+  const libre = await getBalanceAsset(base);
+  const stepSize = await getStepSize(symbol);
+  const cantidadVenta = ajustarAStep(Math.min(cantidad, libre), stepSize);
+  if (!(parseFloat(cantidadVenta) > 0)) {
+    throw new Error(`Sin saldo para vender ${symbol} (pedido ${cantidad}, libre ${libre})`);
+  }
+
+  console.log(`🔴 Vendiendo ${cantidadVenta} ${symbol}...`);
   const order = await signedRequest({
     method: 'POST',
     endpoint: '/api/v3/order',
@@ -99,7 +157,7 @@ async function vender(symbol, cantidad) {
       symbol,
       side: 'SELL',
       type: 'MARKET',
-      quantity: cantidad.toString()
+      quantity: cantidadVenta
     }
   });
 
@@ -115,4 +173,4 @@ async function vender(symbol, cantidad) {
   };
 }
 
-module.exports = { getCandles, getBalance, comprar, vender };
+module.exports = { getCandles, getPrecio, getBalance, getBalanceAsset, ajustarAStep, comprar, vender };

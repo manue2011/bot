@@ -3,26 +3,46 @@ const config = require('../config/settings');
 
 let cacheNoticias = {};
 let ultimaActualizacion = 0;
-let actualizando = false;
-
-const NOMBRES_LARGOS = {
-  AVAX: 'avalanche', SOL: 'solana', NEAR: 'near protocol',
-  LINK: 'chainlink', DOT: 'polkadot', MATIC: 'polygon',
-  ADA: 'cardano', ETH: 'ethereum', BNB: 'binance'
-};
+let actualizando = null; // promesa compartida para no pedir dos veces a la vez
 
 const NOMBRES = {
   BTC: ['bitcoin', 'btc'],
-  ETH: ['ethereum', 'eth']
+  ETH: ['ethereum', 'eth', 'ether']
 };
 
-const palabrasPositivas = ['surge', 'rally', 'breakout', 'bullish', 'adoption', 'partnership', 'upgrade', 'record high', 'soars', 'jumps'];
-const palabrasNegativas = ['crash', 'hack', 'exploit', 'ban', 'lawsuit', 'bankrupt', 'rug', 'scam', 'plunge', 'collapse', 'seized'];
+const palabrasPositivas = ['surge', 'surges', 'rally', 'rallies', 'breakout', 'bullish', 'adoption', 'partnership', 'upgrade', 'record high', 'soars', 'jumps'];
+const palabrasNegativas = ['crash', 'crashes', 'hack', 'hacked', 'exploit', 'ban', 'bans', 'lawsuit', 'bankrupt', 'bankruptcy', 'rug pull', 'scam', 'plunge', 'plunges', 'collapse', 'seized'];
 
-async function actualizarNoticias() {
-  const ahora = Date.now();
-  if (ahora - ultimaActualizacion < 5 * 60 * 1000 && Object.keys(cacheNoticias).length > 0) return;
+// Coincidencia por palabra completa: "ban" no debe saltar con "bank" ni "eth" con "whether"
+const escapar = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const regexPalabra = p => new RegExp(`\\b${escapar(p)}\\b`, 'i');
+const REGEX_POS = palabrasPositivas.map(regexPalabra);
+const REGEX_NEG = palabrasNegativas.map(regexPalabra);
 
+function analizarNoticias(data, symbol) {
+  const moneda = symbol.replace('USDT', '');
+  const terminos = (NOMBRES[moneda] || [moneda.toLowerCase()]).map(regexPalabra);
+
+  const noticiasMoneda = data.filter(n => {
+    const texto = `${n.headline} ${n.summary}`;
+    return terminos.some(r => r.test(texto));
+  }).slice(0, 5);
+
+  let score = 0;
+  noticiasMoneda.forEach(n => {
+    const texto = `${n.headline} ${n.summary}`;
+    REGEX_POS.forEach(r => { if (r.test(texto)) score++; });
+    REGEX_NEG.forEach(r => { if (r.test(texto)) score--; });
+  });
+
+  return {
+    sentimiento: score > 1 ? 'POSITIVO' : score < -2 ? 'NEGATIVO' : 'NEUTRO',
+    score,
+    titular: noticiasMoneda[0]?.headline || 'Sin noticias recientes'
+  };
+}
+
+async function descargarNoticias() {
   try {
     console.log('📰 Actualizando noticias...');
     const { data } = await axios.get('https://finnhub.io/api/v1/news', {
@@ -33,29 +53,9 @@ async function actualizarNoticias() {
     if (!Array.isArray(data)) throw new Error('Respuesta inválida');
 
     config.SYMBOLS.forEach(symbol => {
-      const moneda = symbol.replace('USDT', '');
-      const terminos = NOMBRES[moneda] || [moneda.toLowerCase()];
-
-      const noticias = data.filter(n => {
-        const texto = `${n.headline} ${n.summary}`.toLowerCase();
-        return terminos.some(t => texto.includes(t));
-      }).slice(0, 5);
-
-      let score = 0;
-      noticias.forEach(n => {
-        const texto = `${n.headline} ${n.summary}`.toLowerCase();
-        palabrasPositivas.forEach(p => { if (texto.includes(p)) score++; });
-        palabrasNegativas.forEach(p => { if (texto.includes(p)) score--; });
-      });
-
-      cacheNoticias[symbol] = {
-        sentimiento: score > 1 ? 'POSITIVO' : score < -2 ? 'NEGATIVO' : 'NEUTRO',
-        score,
-        titular: noticiasMoneda[0]?.headline || 'Sin noticias recientes'
-      };
+      cacheNoticias[symbol] = analizarNoticias(data, symbol);
     });
 
-    ultimaActualizacion = ahora;
     const status = config.SYMBOLS.map(s => `${s.replace('USDT', '')}: ${cacheNoticias[s]?.sentimiento}`).join(' | ');
     console.log(`📰 Noticias → ${status}`);
 
@@ -65,6 +65,14 @@ async function actualizarNoticias() {
       if (!cacheNoticias[s]) cacheNoticias[s] = { sentimiento: 'NEUTRO', score: 0, titular: 'Error' };
     });
   }
+  // También tras un error: así no se reintenta en cada ciclo y no se agota el límite de la API
+  ultimaActualizacion = Date.now();
+}
+
+async function actualizarNoticias() {
+  if (Date.now() - ultimaActualizacion < 5 * 60 * 1000 && Object.keys(cacheNoticias).length > 0) return;
+  if (!actualizando) actualizando = descargarNoticias().finally(() => { actualizando = null; });
+  await actualizando;
 }
 
 async function getNoticiasScore(symbol) {
@@ -72,4 +80,4 @@ async function getNoticiasScore(symbol) {
   return cacheNoticias[symbol] || { sentimiento: 'NEUTRO', score: 0, titular: 'Sin datos' };
 }
 
-module.exports = { getNoticiasScore };
+module.exports = { getNoticiasScore, analizarNoticias };

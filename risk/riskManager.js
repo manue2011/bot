@@ -37,21 +37,6 @@ function guardarTrade(trade) {
   fs.writeFileSync(TRADES_PATH, JSON.stringify(trades, null, 2));
 }
 
-function calcTakeProfit(precioEntrada) {
-  const feeTotal = config.FEE_PCT * 2;
-  const pctNeto = config.TAKE_PROFIT_PCT - feeTotal;
-  return parseFloat((precioEntrada * (1 + pctNeto / 100)).toFixed(2));
-}
-
-function calcStopLoss(precioEntrada, atr) {
-  const distancia = atr
-    ? atr * 1.5
-    : precioEntrada * (config.STOP_LOSS_PCT / 100);
-  const stopATR = precioEntrada - distancia;
-  const stopMaximo = precioEntrada * (1 - config.STOP_LOSS_PCT / 100);
-  return parseFloat(Math.max(stopATR, stopMaximo).toFixed(2));
-}
-
 function calcResultado(precioEntrada, precioSalida, cantidad) {
   const bruto = (precioSalida - precioEntrada) * cantidad;
   const feeCompra = precioEntrada * cantidad * (config.FEE_PCT / 100);
@@ -159,7 +144,7 @@ function estaMonedaBloqueada(symbol, limite = 3) {
 }
 
 module.exports = {
-  calcTakeProfit, calcStopLoss, calcResultado,
+  calcResultado,
   validarMinNotional, superaPerdidaMaxima, calcPerdidaDiaria,
   generarResumenDiario, guardarTrade, cargarTrades,
   guardarPosiciones, cargarPosiciones,

@@ -5,16 +5,17 @@ const http = require('http');
 http.createServer((req, res) => res.end('Bot activo')).listen(8080);
 
 const config = require('./config/settings');
-const { getCandles, comprar, vender } = require('./services/binanceService');
+const { getCandles, getPrecio, comprar, vender } = require('./services/binanceService');
+const { enviarAHoja } = require('./services/sheetService');
 const { getNoticiasScore } = require('./services/newsService');
 const { getFearGreed, evaluarFearGreed } = require('./services/fearGreedService');
 const telegram = require('./services/telegramService');
-const { calcRSI } = require('./indicators/rsi');
-const { calcSMA } = require('./indicators/sma');
-const { calcMACD } = require('./indicators/macd');
-const { calcATR } = require('./indicators/atr');
 const {
-  calcTakeProfit, calcStopLoss, calcResultado,
+  tendencia4HDesde, macroDesde, evaluarEntrada,
+  nivelesSalida, nuevoStopTrailing, motivoSalida
+} = require('./strategy/estrategia');
+const {
+  calcResultado,
   validarMinNotional, superaPerdidaMaxima,
   generarResumenDiario, guardarTrade,
   guardarPosiciones, cargarPosiciones,
@@ -28,17 +29,14 @@ let ultimoVentaTime = datosGuardados.ultimoVentaTime || {};
 
 const invertido = Object.values(posicionesAbiertas).reduce((acc, pos) => acc + (pos.usdt || 0), 0);
 let capitalActual = parseFloat((config.CAPITAL_TOTAL - invertido).toFixed(4));
-let botActivo = true;
+let alertaPerdidaDia = null; // fecha en la que ya se avisó de la pérdida máxima
 
 // ── TENDENCIA 4H ──
-async function obtenerTendencia4H(symbol) {
+async function obtenerTendencia4H(symbol, precio) {
   try {
     const candles4h = await getCandles(symbol, '4h', 60);
     if (!candles4h || candles4h.length < 50) return 'ERROR';
-    const closes4h = candles4h.map(c => parseFloat(c[4]));
-    const sma50 = calcSMA(closes4h, 50);
-    const precioActual = closes4h[closes4h.length - 1];
-    return precioActual > sma50 ? 'ALCISTA_4H' : 'BAJISTA_4H';
+    return tendencia4HDesde(candles4h.map(c => parseFloat(c[4])), precio);
   } catch (e) {
     console.error(`❌ Error tendencia 4H ${symbol}:`, e.message);
     return 'ERROR';
@@ -49,10 +47,8 @@ async function obtenerTendencia4H(symbol) {
 async function obtenerMacro() {
   try {
     const candles = await getCandles('BTCUSDT', '1d', 30);
-    const closes = candles.map(c => parseFloat(c[4]));
-    const sma20 = calcSMA(closes, 20);
-    const precioActual = closes[closes.length - 1];
-    return precioActual > sma20 ? 'BTC_ALCISTA' : 'BTC_BAJISTA';
+    const precioBtc = await getPrecio('BTCUSDT');
+    return macroDesde(candles.map(c => parseFloat(c[4])), precioBtc);
   } catch (e) {
     return 'ERROR_MACRO';
   }
@@ -60,7 +56,6 @@ async function obtenerMacro() {
 
 // ── PROCESADO POR PAR ──
 async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal, macro) {
-  if (!botActivo) return;
   console.log(`🔍 Procesando ${symbol}...`);
 
   try {
@@ -76,33 +71,19 @@ async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal, macro) {
     const closes = candles.map(c => parseFloat(c[4]));
     const volumenes = candles.map(c => parseFloat(c[5]));
 
-    const precio = closes[closes.length - 1];
-    const volActual = volumenes[volumenes.length - 1];
-    const volMedio = volumenes.slice(-20).reduce((a, b) => a + b, 0) / 20;
+    // Velas cerradas para indicadores; precio en vivo del exchange de ejecución para TP/SL
+    const precio = await getPrecio(symbol);
 
-    // 2. INDICADORES
-    const rsi = calcRSI(closes, 14);
-    const sma20 = calcSMA(closes, 20);
-    const sma50 = calcSMA(closes, 50);
-    const macd = calcMACD(closes);
-    const atr = calcATR(highs, lows, closes);
+    const { sentimiento } = await getNoticiasScore(symbol);
+    const tendencia4h = await obtenerTendencia4H(symbol, precio);
 
-    if (!rsi || !sma20 || !sma50 || !macd || !atr) {
+    // 2. INDICADORES + PUNTUACIÓN (strategy/estrategia.js, la misma que usa backtest.js)
+    const señal = evaluarEntrada({ closes, highs, lows, volumenes, precio, tendencia4h, macro, sentimiento });
+    if (!señal) {
       console.log(`⚠️ ${symbol}: error calculando indicadores`);
       return;
     }
-
-    const { sentimiento } = await getNoticiasScore(symbol);
-    const tendencia4h = await obtenerTendencia4H(symbol);
-
-    // 3. PUNTUACIÓN IA
-    let puntuacion = 0;
-    if (tendencia4h === 'ALCISTA_4H') puntuacion += 3;
-    if (macro === 'BTC_ALCISTA') puntuacion += 2;
-    if (precio > sma20) puntuacion += 2;
-    if (rsi > 45 && rsi < 68) puntuacion += 2;
-    if (macd.alcista) puntuacion += 2;
-    if (sentimiento === 'POSITIVO') puntuacion += 1;
+    const { rsi, sma20, macd, atr, puntuacion, estrategia } = señal;
 
     console.log(`\n📊 ${symbol} | $${precio.toFixed(2)}`);
     console.log(`   RSI: ${rsi} | SMA20: $${sma20} | MACD: ${macd.alcista ? '↑' : '↓'} | ATR: ${atr}`);
@@ -113,30 +94,17 @@ async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal, macro) {
       const pos = posicionesAbiertas[symbol];
       const gananciaActualPct = ((precio - pos.precioEntrada) / pos.precioEntrada) * 100;
 
-      // TRAILING STOP
-      if (gananciaActualPct >= config.TRAILING_ACTIVACION_PCT) {
-        const nuevoStop = precio * (1 - config.TRAILING_DISTANCIA_PCT / 100);
-        const stopAsegurado = pos.precioEntrada * 1.005;
-        const mejorStop = Math.max(nuevoStop, stopAsegurado);
-
-        if (mejorStop > pos.stopLoss) {
-          pos.stopLoss = parseFloat(mejorStop.toFixed(2));
-          guardarPosiciones({ posiciones: posicionesAbiertas, ultimoVentaTime });
-          console.log(`📈 [TRAILING] ${symbol} → suelo $${pos.stopLoss} (+${gananciaActualPct.toFixed(2)}%)`);
-        }
+      // TRAILING STOP / BREAKEVEN
+      const nuevoStop = nuevoStopTrailing(pos, precio);
+      if (nuevoStop) {
+        pos.stopLoss = parseFloat(nuevoStop.toFixed(2));
+        guardarPosiciones({ posiciones: posicionesAbiertas, ultimoVentaTime });
+        console.log(`📈 [TRAILING] ${symbol} → suelo $${pos.stopLoss} (+${gananciaActualPct.toFixed(2)}%)`);
       }
 
-      const debeVender =
-        precio >= pos.takeProfit ||
-        precio <= pos.stopLoss ||
-        sentimiento === 'NEGATIVO';
+      const motivo = motivoSalida(pos, precio, sentimiento);
 
-      if (debeVender) {
-        const motivo =
-          precio >= pos.takeProfit ? '🎯 Take-Profit' :
-          precio <= pos.stopLoss ? '🛡️ Stop-Loss' :
-          '📰 Noticias';
-
+      if (motivo) {
         // Reintento x3
         let orden;
         for (let intento = 1; intento <= 3; intento++) {
@@ -150,7 +118,7 @@ async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal, macro) {
           }
         }
 
-        const { neto, pct } = calcResultado(pos.precioEntrada, orden.precio, pos.cantidad);
+        const { neto, pct } = calcResultado(pos.precioEntrada, orden.precio, orden.cantidad);
 
         registrarResultadoKillSwitch(symbol, neto);
         capitalActual = parseFloat((capitalActual + neto + (pos.usdt || 0)).toFixed(4));
@@ -176,10 +144,19 @@ async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal, macro) {
           capitalActual, motivo
         });
 
+        await enviarAHoja({
+          symbol, estrategia: pos.estrategia, notaIA: pos.notaIA,
+          estadoMacro: `${pos.macro} | ${pos.tendencia4h}`,
+          tipo: 'VENTA', precio: orden.precio, cantidad: orden.cantidad,
+          ganancia: neto, porcentaje: pct, motivo
+        });
+
+        // Pérdida máxima: se pausan las COMPRAS hasta mañana; las ventas siguen protegiendo
         const { supera, perdidaHoy } = superaPerdidaMaxima();
-        if (supera) {
-          botActivo = false;
-          await telegram.mensajeAlertaCritica('Pérdida máxima diaria', perdidaHoy, capitalActual);
+        const hoy = new Date().toDateString();
+        if (supera && alertaPerdidaDia !== hoy) {
+          alertaPerdidaDia = hoy;
+          await telegram.mensajeAlertaCritica('Pérdida máxima diaria — compras pausadas hasta mañana', perdidaHoy, capitalActual);
         }
       }
       return;
@@ -189,35 +166,19 @@ async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal, macro) {
     const horaUTC = new Date().getUTCHours();
     const horaActiva = horaUTC >= config.HORA_INICIO_UTC && horaUTC <= config.HORA_FIN_UTC;
 
-    const esMomentum =
-      rsi > 50 && rsi < 70 &&
-      precio > sma20 &&
-      precio > sma50 &&
-      macd.alcista &&
-      volActual > volMedio * 1.1 &&
-      tendencia4h === 'ALCISTA_4H' &&
-      macro === 'BTC_ALCISTA';
-
-    const esMeanReversion =
-      rsi < 38 &&
-      precio < sma20 &&
-      macd.alcista &&
-      tendencia4h === 'ALCISTA_4H' &&
-      macro === 'BTC_ALCISTA';
-
-    const estrategia = esMomentum ? 'Momentum' : esMeanReversion ? 'MeanReversion' : null;
-
+    const notaMinima = config.ESTRATEGIA.MIN_NOTA;
     const tiempoDesdeVenta = Date.now() - (ultimoVentaTime[symbol] || 0);
     const enfriamientoOk = tiempoDesdeVenta > 300000; // 5 minutos
     const monedaBloqueada = estaMonedaBloqueada(symbol, 3);
     const capitalSuficiente = capitalActual >= config.CAPITAL_POR_PAR;
     const maxTradesOk = Object.keys(posicionesAbiertas).length < config.MAX_OPEN_TRADES;
     const minNotionalOk = validarMinNotional(config.CAPITAL_POR_PAR);
+    const perdidaDiariaOk = !superaPerdidaMaxima().supera;
 
     let razon = '';
     if (!estrategia) razon = `Sin señal (RSI:${rsi} MACD:${macd.alcista ? '↑' : '↓'} 4H:${tendencia4h} Macro:${macro})`;
     else if (!horaActiva) razon = `🌙 Hora inactiva (${horaUTC}h UTC)`;
-    else if (puntuacion < 8) razon = `🧠 Nota insuficiente (${puntuacion}/12)`;
+    else if (puntuacion < notaMinima) razon = `🧠 Nota insuficiente (${puntuacion}/12)`;
     else if (monedaBloqueada) razon = `🛡️ Kill Switch activo`;
     else if (!enfriamientoOk) razon = `⏳ Enfriamiento (${Math.ceil((300000 - tiempoDesdeVenta) / 1000)}s)`;
     else if (sentimiento === 'NEGATIVO') razon = `📰 Noticias negativas`;
@@ -225,18 +186,20 @@ async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal, macro) {
     else if (!capitalSuficiente) razon = `💰 Capital insuficiente ($${capitalActual})`;
     else if (!maxTradesOk) razon = `📦 Máximo trades abiertos`;
     else if (!minNotionalOk) razon = `❌ Mínimo Binance no alcanzado`;
+    else if (!perdidaDiariaOk) razon = `🛑 Pérdida máxima diaria alcanzada`;
 
     const puedeComprar =
       estrategia !== null &&
       horaActiva &&
-      puntuacion >= 8 &&
+      puntuacion >= notaMinima &&
       !monedaBloqueada &&
       enfriamientoOk &&
       sentimiento !== 'NEGATIVO' &&
       fgSeñal !== 'PELIGRO' &&
       capitalSuficiente &&
       maxTradesOk &&
-      minNotionalOk;
+      minNotionalOk &&
+      perdidaDiariaOk;
 
     if (puedeComprar) {
       console.log(`🟢 COMPRANDO ${symbol} (${estrategia}) Nota:${puntuacion}/12`);
@@ -244,13 +207,15 @@ async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal, macro) {
 
       try {
         const orden = await comprar(symbol, config.CAPITAL_POR_PAR);
-        const stopLoss = calcStopLoss(orden.precio, atr);
-        const takeProfit = calcTakeProfit(orden.precio);
+        const niveles = nivelesSalida(orden.precio, atr);
+        const stopLoss = parseFloat(niveles.stopLoss.toFixed(2));
+        const takeProfit = parseFloat(niveles.takeProfit.toFixed(2));
 
         posicionesAbiertas[symbol] = {
           precioEntrada: orden.precio,
           cantidad: orden.cantidad,
           stopLoss, takeProfit, estrategia,
+          atr, riesgo: niveles.riesgo,
           notaIA: puntuacion,
           usdt: config.CAPITAL_POR_PAR,
           tendencia4h, macro,
@@ -299,7 +264,6 @@ async function procesarPar(symbol, fgValor, fgClasificacion, fgSeñal, macro) {
 
 // ── CICLO PRINCIPAL ──
 async function tick() {
-  if (!botActivo) return;
   console.log(`\n⏰ ${new Date().toLocaleTimeString('es-ES')} — Ciclo de mercado...`);
 
   const { valor: fgValor, clasificacion: fgClasificacion } = await getFearGreed();
