@@ -32,6 +32,8 @@ const invertido = Object.values(posicionesAbiertas).reduce((acc, pos) => acc + (
 let capitalActual = parseFloat((config.CAPITAL_TOTAL - invertido).toFixed(4));
 let alertaPerdidaDia = null; // fecha en la que ya se avisó de la pérdida máxima
 let comprasEnCurso = 0;      // compras lanzadas y aún sin confirmar (los pares se procesan en paralelo)
+const fallosSeguidos = {};   // ciclos seguidos con error por par (cortes de red puntuales no se avisan)
+const FALLOS_PARA_AVISAR = 3;
 
 const redondear = x => parseFloat(x.toPrecision(8)); // vale para BTC (80000) y para PEPE (0.00001)
 const guardarEstado = () => guardarPosiciones({ posiciones: posicionesAbiertas, ultimoVentaTime });
@@ -86,7 +88,7 @@ async function abrirPosicion(symbol, calcularNiveles, extra, detalleTelegram) {
   } catch (err) {
     console.error(`❌ Falló compra ${symbol}:`, err.message);
     capitalActual = parseFloat((capitalActual + config.CAPITAL_POR_PAR).toFixed(4));
-    await telegram.mensajeAlertaCritica(`Error compra ${symbol}`, err.message, capitalActual);
+    await telegram.mensajeError(`Error compra ${symbol}`, err.message, capitalActual);
   } finally {
     comprasEnCurso--;
   }
@@ -105,7 +107,7 @@ async function cerrarPosicion(symbol, pos, motivo) {
         delete posicionesAbiertas[symbol];
         capitalActual = parseFloat((capitalActual + (pos.usdt || 0)).toFixed(4));
         guardarEstado();
-        await telegram.mensajeAlertaCritica(`Posición ${symbol} eliminada: sin saldo en la cuenta`, 0, capitalActual);
+        await telegram.mensajeError(`Posición ${symbol} eliminada`, 'Sin saldo de la moneda en la cuenta', capitalActual);
         return;
       }
       if (intento === 3) throw err;
@@ -156,6 +158,15 @@ async function cerrarPosicion(symbol, pos, motivo) {
   }
 }
 
+// Un corte de red puntual se arregla solo en el siguiente ciclo: solo se avisa si el par falla varios seguidos
+async function registrarFallo(symbol, err) {
+  console.error(`❌ Error general ${symbol}:`, err.message);
+  fallosSeguidos[symbol] = (fallosSeguidos[symbol] || 0) + 1;
+  if (fallosSeguidos[symbol] === FALLOS_PARA_AVISAR) {
+    await telegram.mensajeError(`Fallo en ${symbol} (${FALLOS_PARA_AVISAR} ciclos seguidos)`, err.message, capitalActual);
+  }
+}
+
 // Comprobaciones de capital y riesgo comunes. Devuelve la razón por la que NO se puede comprar, o null.
 function bloqueoCompra() {
   if (capitalActual < config.CAPITAL_POR_PAR) return `💰 Capital insuficiente ($${capitalActual})`;
@@ -169,6 +180,7 @@ function bloqueoCompra() {
 const ultimaVelaEvaluada = {};
 
 async function procesarParTendencia(symbol, btc) {
+  let fallo = false;
   try {
     const precio = await getPrecio(symbol);
     const pos = posicionesAbiertas[symbol];
@@ -226,8 +238,10 @@ async function procesarParTendencia(symbol, btc) {
       `📈 Ruptura del máximo de ${config.TENDENCIA.N} velas de 4h ($${r.maxPrevio.toPrecision(6)})\n🎯 Sin take-profit: el stop sube con la tendencia`
     );
   } catch (err) {
-    console.error(`❌ Error general ${symbol}:`, err.message);
-    await telegram.mensajeAlertaCritica(`Fallo grave ${symbol}`, err.message, capitalActual);
+    fallo = true;
+    await registrarFallo(symbol, err);
+  } finally {
+    if (!fallo) fallosSeguidos[symbol] = 0;
   }
 }
 
@@ -254,6 +268,7 @@ async function obtenerMacro() {
 }
 
 async function procesarParSwing(symbol, fgValor, fgSeñal, macro) {
+  let fallo = false;
   try {
     const candles = await getCandles(symbol, '1h', 60);
     if (!candles || candles.length < 40) {
@@ -324,8 +339,10 @@ async function procesarParSwing(symbol, fgValor, fgSeñal, macro) {
       `📊 RSI: ${rsi.toFixed(2)} | MACD: ${macd.alcista ? '↑' : '↓'} | Tendencia 4H: ${tendencia4h}\n😱 Fear&Greed: ${fgValor}`
     );
   } catch (err) {
-    console.error(`❌ Error general ${symbol}:`, err.message);
-    await telegram.mensajeAlertaCritica(`Fallo grave ${symbol}`, err.message, capitalActual);
+    fallo = true;
+    await registrarFallo(symbol, err);
+  } finally {
+    if (!fallo) fallosSeguidos[symbol] = 0;
   }
 }
 
@@ -359,7 +376,8 @@ function programarResumenDiario() {
   const medianoche = new Date(ahora);
   medianoche.setHours(23, 59, 0, 0);
   const msHasta = medianoche.getTime() - ahora.getTime();
-  const delay = msHasta > 0 ? msHasta : msHasta + 24 * 60 * 60 * 1000;
+  // Margen de 1 min: el temporizador puede dispararse unos ms antes de las 23:59 y se programaría otra vez para hoy (resumen doble)
+  const delay = msHasta > 60000 ? msHasta : msHasta + 24 * 60 * 60 * 1000;
   setTimeout(async () => {
     const resumen = generarResumenDiario(capitalActual);
     await telegram.mensajeResumenDiario(resumen);

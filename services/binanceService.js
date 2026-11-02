@@ -37,11 +37,26 @@ async function signedRequest({ method, endpoint, params = {} }) {
   }
 }
 
+// GET con reintentos ante cortes de red (ECONNRESET, timeouts) o errores 5xx/429 del servidor.
+// Solo para consultas: las órdenes NO se reintentan (podrían ejecutarse dos veces).
+async function getConReintentos(url, opciones, intentos = 3) {
+  for (let i = 1; ; i++) {
+    try {
+      return await axios.get(url, opciones);
+    } catch (err) {
+      const status = err.response?.status;
+      const transitorio = !err.response || status >= 500 || status === 429;
+      if (!transitorio || i >= intentos) throw err;
+      await new Promise(r => setTimeout(r, 1000 * i));
+    }
+  }
+}
+
 // Velas CERRADAS del mercado real (señales). Se descarta la vela en curso:
 // su cierre y volumen están a medias y falsean RSI, MACD y el filtro de volumen.
 async function getCandles(symbol, interval = '1h', limit = 60) {
   try {
-    const { data } = await axios.get('https://api.binance.com/api/v3/klines', {
+    const { data } = await getConReintentos('https://api.binance.com/api/v3/klines', {
       params: { symbol, interval, limit: limit + 1 },
       timeout: 8000
     });
@@ -56,7 +71,7 @@ async function getCandles(symbol, interval = '1h', limit = 60) {
 // (testnet en pruebas, real en producción), para comparar con TP/SL.
 async function getPrecio(symbol) {
   try {
-    const { data } = await axios.get(`${BASE_URL}/api/v3/ticker/price`, {
+    const { data } = await getConReintentos(`${BASE_URL}/api/v3/ticker/price`, {
       params: { symbol },
       timeout: 8000
     });

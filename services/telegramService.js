@@ -82,4 +82,16 @@ Motivo: ${motivoLimpio}
 Revisa los logs en Fly.io`);
 }
 
-module.exports = { bot, enviar, mensajeInicio, mensajeCompra, mensajeVenta, mensajeResumenDiario, mensajeAlertaCritica };
+// Errores técnicos (red, Binance...): el detalle va en su propia línea, no como "pérdida"
+function mensajeError(titulo, detalle, capitalActual) {
+  const limpiar = t => String(t).replace(/<[^>]*>/g, '').substring(0, 300);
+  return enviar(`⚠️ <b>ERROR</b>
+━━━━━━━━━━━━━━━━━━━━
+Motivo: <b>${limpiar(titulo)}</b>
+Detalle: ${limpiar(detalle)}
+💰 Capital libre: <b>$${capitalActual} USDT</b>
+━━━━━━━━━━━━━━━━━━━━
+Revisa los logs en Fly.io`);
+}
+
+module.exports = { bot, enviar, mensajeInicio, mensajeCompra, mensajeVenta, mensajeResumenDiario, mensajeAlertaCritica, mensajeError };
