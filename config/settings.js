@@ -27,7 +27,7 @@ module.exports = {
   TENDENCIA: {
     N: 55,          // ruptura del máximo de las últimas 55 velas de 4h (~9 días)
     M: 20,          // stop sube al mínimo de las últimas 20 velas de 4h (~3.3 días)
-    STOP_ATR: 3,    // stop inicial a 3 × ATR(14) de 4h
+    STOP_ATR: 2,    // stop inicial a 2 × ATR(14) de 4h (frente a 3: ganancia similar, peor caída -25% en vez de -31%)
     SMA_DIAS: 100,  // filtro de régimen: precio > media de 100 días
     FILTRO: 'ambos' // 'ambos' (moneda y BTC), 'btc', 'moneda' o 'ninguno'
   },
